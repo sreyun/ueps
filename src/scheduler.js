@@ -72,9 +72,9 @@ class Scheduler extends EventEmitter {
 		}
 		for (const [id, rt] of this.programs) {
 			if (seen.has(id)) continue;
-			// 程序被删除：排队观众拒绝，实例停止
-			for (const p of rt.queue.splice(0)) this.emit("rejected", p, "程序已删除");
+			// 程序被删除：先停止实例（其观众会被放回队列），再拒绝队列中的所有观众，避免观众滞留在已删除程序的队列里
 			for (const inst of this.instancesOf(id)) this.stopInstance(inst.id, "program deleted");
+			for (const p of rt.queue.splice(0)) this.emit("rejected", p, "程序已删除");
 			this.programs.delete(id);
 		}
 		for (const [id, rt] of this.programs) {

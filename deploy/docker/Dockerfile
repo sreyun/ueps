@@ -32,11 +32,17 @@ HEALTHCHECK --interval=15s --timeout=3s --start-period=15s --retries=3 \
   CMD wget -qO- "http://127.0.0.1:${PS_PUBLIC_PORT:-8088}/healthz" >/dev/null || exit 1
 CMD ["node", "server.js"]
 
-FROM platform AS demo-agent
+# Chromium 层只依赖基础镜像，代码变更时不需要重新下载（约 100MB）
+FROM ${NODE_IMAGE} AS demo-base
 ARG APK_MIRROR=
 # Alpine 的 busybox sed 基础正则不支持 \? ，必须用 -E
 RUN if [ -n "$APK_MIRROR" ]; then sed -i -E "s#https?://dl-cdn.alpinelinux.org#${APK_MIRROR}#g" /etc/apk/repositories; fi \
  && apk add --no-cache chromium ttf-dejavu font-wqy-zenhei
+
+FROM demo-base AS demo-agent
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=platform /app /app
 COPY test/e2e/fake-ue-launcher.js test/e2e/fake-ue.html ./test/e2e/
 HEALTHCHECK NONE
 # 平台下发的"UE 可执行文件"为 /usr/local/bin/node，参数为 /app/test/e2e/fake-ue-launcher.js（见 docker-compose.demo.yml）

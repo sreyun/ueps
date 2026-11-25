@@ -2,72 +2,272 @@
 <html lang="zh-CN">
 	<head>
 		<meta charset="utf-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+		<meta name="theme-color" content="#000000" />
 		<title>云渲染</title>
 		<link rel="icon" href="/favicon.svg" />
+		<!--
+			播放页。地址：/play/<程序ID>、/video.html?urlPrefix=<程序ID>（兼容企业版）、/<程序ID>
+			可选参数：token=访问链接令牌  stats=1 显示链路状态  relay=1 强制走 TURN 中继  ui=0 隐藏控制栏（嵌入时使用）
+		-->
 		<style>
-			html, body { margin: 0; height: 100%; background: #000; color: #e8eaed; font: 14px/1.5 system-ui, "Microsoft YaHei", sans-serif; overflow: hidden; }
+			html, body { margin: 0; height: 100%; background: #000; color: #e8eaed; font: 14px/1.5 system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; overflow: hidden; -webkit-tap-highlight-color: transparent; }
 			/* 按视频真实宽高比居中留黑边：元素尺寸 = 画面尺寸，键鼠坐标换算才准确（不能用 object-fit 拉伸/裁剪） */
 			:root { --ar: 1.7778; }
-			video { position: absolute; inset: 0; margin: auto; width: min(100vw, calc(100vh * var(--ar))); height: min(100vh, calc(100vw / var(--ar))); background: #000; }
-			#overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 14px; background: radial-gradient(circle at center, #1b2433 0%, #05070a 70%); transition: opacity .4s; z-index: 2; }
+			video { position: absolute; inset: 0; margin: auto; width: min(100vw, calc(100vh * var(--ar))); height: min(100vh, calc(100vw / var(--ar))); background: #000; outline: none; }
+
+			/* 连接 / 排队 / 错误遮罩 */
+			#overlay { position: fixed; inset: 0; display: grid; place-items: center; background: radial-gradient(circle at 50% 40%, #142036 0%, #04060a 72%); transition: opacity .45s; z-index: 5; padding: 20px; }
 			#overlay.hidden { opacity: 0; pointer-events: none; }
-			.spinner { width: 42px; height: 42px; border: 3px solid rgba(255,255,255,.15); border-top-color: #4f8cff; border-radius: 50%; animation: spin 1s linear infinite; }
+			.ov { width: min(420px, 100%); text-align: center; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+			.ov-title { font-size: 18px; font-weight: 600; letter-spacing: .02em; opacity: .95; }
+			.spinner { width: 46px; height: 46px; border: 3px solid rgba(255,255,255,.12); border-top-color: #4f8cff; border-radius: 50%; animation: spin 1s linear infinite; }
+			.ov.error .spinner, .ov.queue .spinner, .ov.tap .spinner, .ov.tap .steps { display: none; }
+			.ov.tap { cursor: pointer; }
+			.ov.tap::before { content: "▶"; width: 72px; height: 72px; border-radius: 50%; background: #4f8cff; display: grid; place-items: center; font-size: 26px; padding-left: 5px; box-sizing: border-box; box-shadow: 0 10px 30px rgba(79,140,255,.4); order: 1; }
+			.ov.tap .ov-title { order: 0; }
+			.ov.tap #msg, .ov.tap #sub { order: 2; }
 			@keyframes spin { to { transform: rotate(360deg); } }
-			#msg { font-size: 16px; text-align: center; max-width: 80vw; }
-			#sub { opacity: .6; font-size: 13px; }
-			#hud { position: fixed; right: 10px; bottom: 10px; z-index: 3; padding: 8px 10px; border-radius: 8px; background: rgba(0,0,0,.55); font: 12px/1.6 ui-monospace, Consolas, monospace; white-space: pre; pointer-events: none; }
+			.err-icon { display: none; width: 46px; height: 46px; border-radius: 50%; border: 2px solid #f87171; color: #f87171; font-size: 24px; place-items: center; }
+			.ov.error .err-icon { display: grid; }
+			#queue { display: none; flex-direction: column; align-items: center; }
+			.ov.queue #queue { display: flex; }
+			#queue b { font-size: 48px; line-height: 1.1; font-variant-numeric: tabular-nums; color: #8fb4ff; }
+			#queue span { opacity: .6; font-size: 13px; }
+			#msg { font-size: 16px; max-width: 100%; }
+			#sub { opacity: .62; font-size: 13px; min-height: 1em; }
+			.steps { display: flex; gap: 8px; align-items: center; font-size: 12px; opacity: .8; }
+			.ov.error .steps { display: none; }
+			.steps i { width: 8px; height: 8px; border-radius: 50%; background: rgba(255,255,255,.18); display: inline-block; }
+			.steps i.on { background: #4f8cff; box-shadow: 0 0 0 4px rgba(79,140,255,.18); }
+			.steps i.done { background: #22c55e; }
+			.steps em { font-style: normal; opacity: .5; }
+			#actions { display: none; gap: 10px; flex-wrap: wrap; justify-content: center; }
+			.ov.error #actions { display: flex; }
+			button, .btn { font: inherit; cursor: pointer; border-radius: 8px; padding: 7px 16px; border: 1px solid rgba(255,255,255,.22); background: rgba(255,255,255,.06); color: #fff; text-decoration: none; }
+			button:hover, .btn:hover { background: rgba(255,255,255,.12); }
+			button.primary { background: #4f8cff; border-color: #4f8cff; }
+
+			/* 控制栏：3 秒无操作自动隐藏 */
+			#bar { position: fixed; left: 50%; bottom: max(12px, env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 4; display: flex; gap: 6px; align-items: center; padding: 6px; border-radius: 12px; background: rgba(10,14,22,.72); border: 1px solid rgba(255,255,255,.1); backdrop-filter: blur(8px); transition: opacity .3s, transform .3s; }
+			#bar.idle { opacity: 0; transform: translate(-50%, 8px); pointer-events: none; }
+			#bar button { border: none; background: transparent; padding: 6px 10px; font-size: 13px; border-radius: 8px; }
+			#bar button:hover { background: rgba(255,255,255,.1); }
+			#bar button.attn { background: #4f8cff; }
+			#net { display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; font-size: 12px; opacity: .85; }
+			#net i { width: 8px; height: 8px; border-radius: 50%; background: #6b7280; }
+			#net.good i { background: #22c55e; } #net.warn i { background: #f59e0b; } #net.bad i { background: #ef4444; }
+			body.no-ui #bar, body.no-ui #hud { display: none !important; }
+
+			#hud { position: fixed; right: 12px; top: 12px; z-index: 4; padding: 8px 12px; border-radius: 10px; background: rgba(0,0,0,.6); font: 12px/1.7 ui-monospace, Consolas, monospace; white-space: pre; pointer-events: none; }
 			#hud.hidden { display: none; }
-			#bar { position: fixed; left: 10px; bottom: 10px; z-index: 3; display: flex; gap: 6px; opacity: .35; transition: opacity .2s; }
-			#bar:hover { opacity: 1; }
-			#bar button { background: rgba(0,0,0,.6); color: #fff; border: 1px solid rgba(255,255,255,.25); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
-			.good { color: #5fe08a; } .warn { color: #ffc35a; } .bad { color: #ff6b6b; }
+			#idle { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 6; padding: 8px 16px; border-radius: 99px; background: rgba(245,158,11,.92); color: #111; font-weight: 600; font-size: 13px; display: none; }
+			#idle.show { display: block; }
+			#tip { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 6; padding: 8px 16px; border-radius: 99px; background: rgba(10,14,22,.85); border: 1px solid rgba(255,255,255,.12); font-size: 13px; display: none; }
+			#tip.show { display: block; }
+			@media (max-width: 600px) { #bar button { padding: 6px 8px; } #net span { display: none; } }
 		</style>
 	</head>
 	<body>
 		<script src="/peer-stream.js"></script>
-		<video is="peer-stream"></video>
-		<div id="overlay"><div class="spinner"></div><div id="msg">正在连接…</div><div id="sub"></div></div>
+		<video is="peer-stream" tabindex="0"></video>
+		<div id="overlay">
+			<div class="ov" id="ov">
+				<div class="ov-title" id="title">云渲染</div>
+				<div class="spinner"></div>
+				<div class="err-icon">!</div>
+				<div id="queue"><span>当前访问人数较多，前面还有</span><b id="qn">0</b><span>人在排队，请稍候</span></div>
+				<div id="msg">正在连接…</div>
+				<div id="sub"></div>
+				<div class="steps" id="steps"><i></i><em>连接</em><i></i><em>分配实例</em><i></i><em>建立画面</em></div>
+				<div id="actions"><button class="primary" id="btnRetry">重新连接</button><a class="btn" href="/" id="btnHome">返回首页</a></div>
+			</div>
+		</div>
+		<div id="idle"></div>
+		<div id="tip"></div>
 		<pre id="hud" class="hidden"></pre>
-		<div id="bar"><button id="btnFull">全屏</button><button id="btnHud">状态</button></div>
+		<div id="bar">
+			<span id="net" title="网络质量"><i></i><span>--</span></span>
+			<button id="btnSound" title="声音" hidden>🔇 开启声音</button>
+			<button id="btnHud" title="链路状态">状态</button>
+			<button id="btnFull" title="全屏">⛶ 全屏</button>
+		</div>
 		<script>
 			const $ = (id) => document.getElementById(id);
 			const params = new URLSearchParams(location.search);
-			const show = (msg, sub = "", spin = true) => {
+			const ps = document.querySelector("video");
+			if (params.get("ui") === "0") document.body.classList.add("no-ui");
+			if (params.get("stats") === "1") $("hud").classList.remove("hidden");
+
+			/* ------------------------------------------------ 遮罩状态 */
+			let stage = 0; // 1 连接 2 分配实例 3 建立画面
+			const setStage = (n) => {
+				stage = Math.max(stage, n);
+				[...$("steps").querySelectorAll("i")].forEach((dot, i) => (dot.className = i + 1 < stage ? "done" : i + 1 === stage ? "on" : ""));
+			};
+			const show = (msg, sub = "", mode = "") => {
 				$("overlay").classList.remove("hidden");
+				$("ov").className = "ov " + mode;
 				$("msg").textContent = msg;
 				$("sub").textContent = sub;
-				document.querySelector(".spinner").style.display = spin ? "" : "none";
 			};
-			if (params.get("stats") === "1") $("hud").classList.remove("hidden");
-			$("btnHud").onclick = () => $("hud").classList.toggle("hidden");
-			$("btnFull").onclick = () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.());
+			const fatal = (msg, sub, { retry = true } = {}) => {
+				ps.fatal = true;
+				show(msg, sub, "error");
+				$("btnRetry").style.display = retry ? "" : "none";
+			};
+			show("正在连接…");
+			setStage(1);
 
-			// 服务端的文本提示（以 "! " 开头）：程序不存在、需要访问链接等
+			// 服务端的文本提示（以 "! " 开头）：程序不存在、需要访问链接、被断开等
 			const origOnMsg = ps.onWebSocketMessage.bind(ps);
 			ps.onWebSocketMessage = (data) => {
 				if (typeof data === "string" && data.startsWith("! ")) {
-					show(data.slice(2), "如需帮助请联系管理员", false);
-					ps.fatal = true;
-				}
+					const text = data.slice(2);
+					const retry = !/访问链接|不允许|未找到|不存在|已停用|已删除/.test(text);
+					fatal(text, retry ? "可以点击下方按钮重新连接" : "如需帮助请联系管理员", { retry });
+				} else if (stage < 2) setStage(2);
 				return origOnMsg(data);
 			};
-			ps.addEventListener("playing", () => $("overlay").classList.add("hidden"));
 			ps.addEventListener("playerconfig", (e) => {
-				if (e.detail.name) document.title = e.detail.name;
-				if (e.detail.inactiveReleaseSec) $("sub").textContent = `超过 ${Math.round(e.detail.inactiveReleaseSec / 60) || 1} 分钟无操作将自动断开`;
+				if (e.detail.name) {
+					document.title = e.detail.name;
+					$("title").textContent = e.detail.name;
+				}
+				idleLimit = e.detail.inactiveReleaseSec || 0;
 			});
+			ps.addEventListener("playerqueue", (e) => {
+				const ahead = Math.max(0, e.detail.seq - 1);
+				if (ahead === 0) return show("正在为你启动渲染实例…", "首次进入通常需要几秒到几十秒，请稍候"); // 排在第一位 = 等待实例启动，而不是人多
+				$("qn").textContent = ahead;
+				show("", "", "queue");
+			});
+			ps.addEventListener("connectionstatechange", (e) => {
+				if (e.detail === "connecting" || e.detail === "new") {
+					setStage(3);
+					if (!ps.fatal) show("正在建立画面…", "首次连接可能需要几秒");
+				}
+			});
+			ps.addEventListener("playing", () => {
+				$("overlay").classList.add("hidden");
+				ps.focus({ preventScroll: true });
+				checkSound();
+			});
+			// 部分浏览器（手机浏览器、微信等内置浏览器、严格的自动播放策略）不会自动开始播放：主动 play()，被拒绝时请观众点一下
+			const tryPlay = () => {
+				if (!ps.paused || ps.fatal || !ps.srcObject) return;
+				ps.play().catch(() => !ps.fatal && show("点击开始观看", "浏览器需要一次点击才能开始播放", "tap"));
+			};
+			ps.addEventListener("loadedmetadata", tryPlay);
+			ps.addEventListener("canplay", tryPlay);
+			ps.addEventListener("connectionstatechange", (e) => e.detail === "connected" && setTimeout(tryPlay, 500));
+			setInterval(tryPlay, 3000); // 兜底：媒体已连通但仍未播放
+			$("overlay").addEventListener("click", () => {
+				if ($("ov").classList.contains("tap")) ps.play().then(() => $("overlay").classList.add("hidden"), () => {});
+			});
+			ps.addEventListener("ueDisConnected", () => !ps.fatal && show("渲染服务已切换，正在重新连接…", "无需刷新页面"));
+			ps.addEventListener("webrtcfailed", () => !ps.fatal && show("网络连接失败，正在重试…", "若持续出现，请检查网络或联系管理员"));
+			ps.addEventListener("playerdisconnected", (e) => {
+				if (ps.fatal) return;
+				const code = e.detail?.code;
+				if (e.detail?.fatal) {
+					const reasons = {
+						4001: ["已被管理员断开", "如需继续观看，请点击重新连接"],
+						4002: ["长时间未操作，已自动断开以释放资源", "点击重新连接即可继续观看"],
+						4003: ["需要有效的访问链接", "请使用管理员提供的完整链接打开"],
+						4004: ["未找到对应的内容", "请检查访问地址是否正确"],
+						4005: ["已在其它页面打开", "同一网络地址只能保留一个观看页面"],
+						4006: ["当前网络不允许访问该内容", "请联系管理员"],
+						4000: ["该内容暂不可用", "可能已停用或删除，请联系管理员"],
+						1008: ["连接异常，已断开", "请刷新页面重试"],
+					};
+					const [m, s] = reasons[code] || ["连接已断开", ""];
+					return fatal(m, s, { retry: ![4003, 4004, 4006, 4000].includes(code) });
+				}
+				stage = 0;
+				setStage(1);
+				show("连接已断开，正在重连…", "网络恢复后会自动继续");
+			});
+			$("btnRetry").onclick = () => {
+				ps.fatal = false;
+				stage = 0;
+				setStage(1);
+				show("正在连接…");
+				clearTimeout(ps.reconnect);
+				ps.connectedCallback();
+			};
+
+			/* ------------------------------------------------ 画面比例 */
 			const fitAspect = () => ps.videoWidth && document.documentElement.style.setProperty("--ar", (ps.videoWidth / ps.videoHeight).toFixed(4));
 			ps.addEventListener("loadedmetadata", fitAspect);
 			ps.addEventListener("resize", fitAspect); // UE 切换分辨率时
-			ps.addEventListener("playerqueue", (e) => show("当前访问人数较多，正在排队", `前面还有 ${Math.max(0, e.detail.seq - 1)} 人`));
-			ps.addEventListener("ueDisConnected", () => show("渲染服务已切换，正在重新连接…"));
-			ps.addEventListener("webrtcfailed", () => show("网络连接失败，正在重试…", "若持续出现请检查网络或联系管理员"));
-			ps.addEventListener("playerdisconnected", () => !ps.fatal && show("连接已断开，正在重连…"));
 
+			/* ------------------------------------------------ 控制栏 */
+			let barTimer;
+			const wake = () => {
+				$("bar").classList.remove("idle");
+				clearTimeout(barTimer);
+				barTimer = setTimeout(() => $("bar").classList.add("idle"), 3000);
+			};
+			["mousemove", "touchstart", "keydown"].forEach((ev) => window.addEventListener(ev, wake, { passive: true }));
+			wake();
+			$("btnHud").onclick = () => $("hud").classList.toggle("hidden");
+			$("btnFull").onclick = () => {
+				if (document.fullscreenElement) document.exitFullscreen();
+				else (document.documentElement.requestFullscreen?.() || Promise.reject()).catch(() => tip("当前浏览器不支持全屏，可按 F11"));
+			};
+			document.addEventListener("fullscreenchange", () => ($("btnFull").textContent = document.fullscreenElement ? "⛶ 退出全屏" : "⛶ 全屏"));
+			const tip = (text, ms = 2500) => {
+				$("tip").textContent = text;
+				$("tip").classList.add("show");
+				clearTimeout(tip.t);
+				tip.t = setTimeout(() => $("tip").classList.remove("show"), ms);
+			};
+
+			/* ------------------------------------------------ 声音：浏览器可能拦截自动播放 */
+			const setSoundBtn = () => {
+				const a = ps.audio;
+				$("btnSound").hidden = !a;
+				if (!a) return;
+				const on = !a.paused && !a.muted;
+				$("btnSound").textContent = on ? "🔊 声音" : "🔇 开启声音";
+				$("btnSound").classList.toggle("attn", !on);
+			};
+			const checkSound = () => {
+				const a = ps.audio;
+				if (!a) return setTimeout(() => ps.audio && checkSound(), 1500);
+				a.play().then(setSoundBtn, () => (setSoundBtn(), tip("浏览器阻止了自动播放声音，点击下方「开启声音」")));
+				a.onplay = a.onpause = a.onvolumechange = setSoundBtn;
+			};
+			$("btnSound").onclick = () => {
+				const a = ps.audio;
+				if (!a) return;
+				if (a.paused) {
+					a.muted = false;
+					a.play().catch(() => tip("无法播放声音"));
+				} else a.muted = !a.muted;
+				setSoundBtn();
+			};
+
+			/* ------------------------------------------------ 无操作自动断开提醒（最后 30 秒倒计时） */
+			let idleLimit = 0;
+			let lastInput = Date.now();
+			["mousemove", "mousedown", "keydown", "touchstart", "wheel"].forEach((ev) => window.addEventListener(ev, () => (lastInput = Date.now()), { passive: true }));
+			setInterval(() => {
+				const left = idleLimit ? Math.ceil(idleLimit - (Date.now() - lastInput) / 1000) : Infinity;
+				const showIt = left <= 30 && left > 0 && !ps.fatal;
+				$("idle").classList.toggle("show", showIt);
+				if (showIt) $("idle").textContent = `${left} 秒后将因无操作自动断开，移动鼠标或触摸屏幕即可继续`;
+			}, 1000);
+
+			/* ------------------------------------------------ 链路状态 / 网络质量 */
 			let last = null;
 			setInterval(async () => {
-				if (!(ps.pc instanceof RTCPeerConnection) || ps.pc.connectionState !== "connected") return;
+				if (!(ps.pc instanceof RTCPeerConnection) || ps.pc.connectionState !== "connected") {
+					$("net").className = "";
+					$("net").lastChild.textContent = "--";
+					return;
+				}
 				const stats = await ps.pc.getStats();
 				let v = null, bytes = 0;
 				stats.forEach((s) => {
@@ -77,15 +277,18 @@
 				const t = await ps.getTransportInfo();
 				const now = performance.now();
 				const kbps = last ? Math.round(((bytes - last.b) * 8) / (now - last.t)) : 0;
-				last = { b: bytes, t: now };
+				const lostNow = last && v ? (v.packetsLost || 0) - last.lost : 0;
+				last = { b: bytes, t: now, lost: v?.packetsLost || 0 };
 				const rtt = t?.rtt !== undefined ? Math.round(t.rtt * 1000) : null;
-				const cls = rtt === null ? "" : rtt < 60 ? "good" : rtt < 150 ? "warn" : "bad";
-				const link = t ? (t.localType === "relay" ? `TURN 中继(${t.relayProtocol || "udp"})` : t.localType === "host" ? "内网直连" : t.localType) : "-";
-				$("hud").innerHTML = [
+				const q = rtt === null ? "" : rtt < 80 && lostNow < 5 ? "good" : rtt < 200 && lostNow < 30 ? "warn" : "bad";
+				$("net").className = q;
+				$("net").lastChild.textContent = rtt === null ? "--" : `${rtt} ms`;
+				const link = t ? (t.localType === "relay" ? `TURN 中继 (${t.relayProtocol || "udp"})` : t.localType === "host" ? "内网直连" : t.localType) : "-";
+				$("hud").textContent = [
 					`链路   ${link}`,
-					`延迟   <span class="${cls}">${rtt ?? "-"} ms</span>`,
+					`延迟   ${rtt ?? "-"} ms`,
 					`码率   ${(kbps / 1000).toFixed(2)} Mbps`,
-					`画面   ${v?.frameWidth || "-"}x${v?.frameHeight || "-"} @ ${v?.framesPerSecond ?? "-"} fps`,
+					`画面   ${v?.frameWidth || "-"}×${v?.frameHeight || "-"} @ ${v?.framesPerSecond ?? "-"} fps`,
 					`丢包   ${v?.packetsLost ?? 0}`,
 				].join("\n");
 			}, 1000);

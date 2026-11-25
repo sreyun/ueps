@@ -1,74 +1,102 @@
-import { html, usePoll, api, run, Card, Table, Badge, Modal, Field, fmt, can, useState, copyText, useStore } from "../lib.js";
+import { html, usePoll, api, run, Card, Table, Badge, Modal, Field, fmt, can, useState, useStore, confirmDialog, CopyLine, AsyncButton, Empty, publicUrl, hasPublicBase, embedCode, copyText } from "../lib.js";
 
-const BASE_KEY = "ps.publicBaseUrl";
+const linkState = (l) => (l.revoked ? "revoked" : l.expires_at && l.expires_at < Date.now() ? "expired" : l.max_uses && l.uses >= l.max_uses ? "used" : "ok");
+const STATE = { revoked: ["bad", "已作废"], expired: ["muted", "已过期"], used: ["muted", "次数用完"], ok: ["ok", "有效"] };
 
 export function Links() {
 	const list = usePoll(() => api("GET", "/share-links"), []);
 	const s = useStore();
 	const [creating, setCreating] = useState(false);
-	const [created, setCreated] = useState(null);
-	const [base, setBase] = useState(localStorage.getItem(BASE_KEY) || "");
-	const saveBase = (v) => {
-		setBase(v);
-		localStorage.setItem(BASE_KEY, v.replace(/\/+$/, ""));
+	const [shown, setShown] = useState(null);
+	const [onlyValid, setOnlyValid] = useState(true);
+	const programs = s.overview?.programs || [];
+	const pname = (id) => programs.find((p) => p.id === id)?.name || id;
+	const revoke = async (l) => {
+		if (!(await confirmDialog({ title: "作废访问链接", text: `作废后，正在使用该链接的观众刷新页面即无法再进入。确定作废「${l.note || l.id}」？`, okText: "作废" }))) return;
+		if (await run(() => api("POST", `/share-links/${l.id}/revoke`), "已作废")) list.reload();
 	};
-	const revoke = (l) => run(() => api("POST", `/share-links/${l.id}/revoke`), "已作废").then(list.reload);
-	const status = (l) =>
-		l.revoked ? html`<${Badge} tone="bad">已作废<//>` : l.expires_at && l.expires_at < Date.now() ? html`<${Badge}>已过期<//>` : l.max_uses && l.uses >= l.max_uses ? html`<${Badge}>次数用完<//>` : html`<${Badge} tone="ok">有效<//>`;
+	const copyAgain = async (l) => {
+		const r = await run(() => api("POST", `/share-links/${l.id}/url`));
+		if (r?.path) setShown({ ...l, path: r.path });
+	};
+	const rows = (list.data || []).filter((l) => !onlyValid || linkState(l) === "ok");
 	return html`
-		<${Card} title="对外访问地址">
-			<${Field} label="公网访问前缀" hint="nginx 对外的地址（含映射端口），仅用于拼接完整链接，保存在本浏览器。例如 https://stream.example.com:65443">
-				<input value=${base} placeholder=${location.origin} onInput=${(e) => saveBase(e.target.value)} />
-			<//>
-		<//>
-		<${Card} title="访问链接" extra=${can("operator") && html`<button class="primary" onClick=${() => setCreating(true)}>生成链接</button>`}>
-			<p class="muted small">程序开启「需要访问链接」后，观众必须使用这里生成的链接访问；链接可设置有效期与可用次数，可随时作废。</p>
+		<${Card}
+			title="访问链接"
+			sub="程序开启「需要访问链接」后，观众必须使用这里生成的链接；可设置有效期与可用次数，随时作废。"
+			extra=${html`<label class="check small"><input type="checkbox" checked=${onlyValid} onChange=${(e) => setOnlyValid(e.target.checked)} />只看有效</label>
+				${can("operator") && html`<button class="primary" disabled=${!programs.length} onClick=${() => setCreating(true)}>＋ 生成链接</button>`}`}
+		>
+			${!hasPublicBase() && html`<div class="alert info">尚未设置「对外访问地址」，生成的链接将使用当前管理口地址（外网观众无法访问）。${can("admin") ? html` <a href="#/settings">去设置</a>` : ""}</div>`}
 			<${Table}
-				rows=${list.data}
-				empty="还没有生成过链接"
+				rows=${list.data ? rows : null}
+				loading=${list.loading}
+				empty=${html`<${Empty} action=${can("operator") && programs.length > 0 && html`<button class="primary" onClick=${() => setCreating(true)}>生成链接</button>`}>${onlyValid && list.data?.length ? "没有有效的链接（取消勾选「只看有效」查看全部）" : "还没有生成过链接"}<//>`}
 				columns=${[
-					{ title: "程序", key: "program_id" },
-					{ title: "备注", key: "note" },
-					{ title: "状态", render: status },
+					{ title: "程序", render: (l) => html`${pname(l.program_id)}<div class="muted small">${l.program_id}</div>` },
+					{ title: "备注", class: "wrap", render: (l) => l.note || html`<span class="muted">—</span>` },
+					{ title: "状态", render: (l) => html`<${Badge} tone=${STATE[linkState(l)][0]}>${STATE[linkState(l)][1]}<//>` },
 					{ title: "使用", render: (l) => `${l.uses}${l.max_uses ? ` / ${l.max_uses}` : ""}` },
-					{ title: "到期", render: (l) => (l.expires_at ? fmt.time(l.expires_at) : "不限") },
+					{ title: "到期", render: (l) => (l.expires_at ? fmt.time(l.expires_at) : "永不过期") },
 					{ title: "创建", render: (l) => html`${fmt.time(l.created_at)}<div class="muted small">${l.created_by}</div>` },
-					{ title: "", class: "actions", render: (l) => can("operator") && !l.revoked && html`<button class="danger sm" onClick=${() => revoke(l)}>作废</button>` },
+					{
+						title: "",
+						class: "actions",
+						render: (l) =>
+							can("operator") &&
+							linkState(l) === "ok" &&
+							html`<button class="ghost sm" onClick=${() => copyAgain(l)}>复制链接</button><button class="danger sm" onClick=${() => revoke(l)}>作废</button>`,
+					},
 				]}
 			/>
 		<//>
 		${creating &&
 		html`<${CreateModal}
-			programs=${s.overview?.programs || []}
+			programs=${programs}
 			onClose=${() => setCreating(false)}
 			onCreated=${(l) => {
 				setCreating(false);
-				setCreated(l);
+				setShown(l);
 				list.reload();
 			}}
 		/>`}
-		${created &&
-		html`<${Modal} title="链接已生成" onClose=${() => setCreated(null)} footer=${html`<button class="primary" onClick=${() => setCreated(null)}>完成</button>`}>
-			<p>请复制下面的链接发给观众（只显示这一次）：</p>
-			<pre class="code wrap">${(base || location.origin) + created.path}</pre>
-			<button class="primary" onClick=${() => copyText((base || location.origin) + created.path)}>复制链接</button>
-		<//>`}
+		${shown && html`<${LinkModal} l=${shown} name=${pname(shown.program_id)} onClose=${() => setShown(null)} />`}
 	`;
 }
 
+function LinkModal({ l, name, onClose }) {
+	const url = publicUrl(l.path);
+	const legacy = publicUrl(`/video.html?urlPrefix=${encodeURIComponent(l.program_id)}&token=${new URL(l.path, location.origin).searchParams.get("token")}`);
+	return html`<${Modal} wide title=${`访问链接：${name}`} onClose=${onClose} footer=${html`<button class="primary" onClick=${onClose}>完成</button>`}>
+		<p class="muted small">把链接发给观众即可观看${l.expires_at ? `，${fmt.time(l.expires_at)} 前有效` : ""}${l.max_uses ? `，最多 ${l.max_uses} 位观众使用（同一观众刷新不重复计数）` : ""}。之后也可以在列表中再次复制。</p>
+		<${CopyLine} label="访问链接" value=${url} />
+		<${CopyLine} label="企业版兼容" value=${legacy} />
+		<h4>嵌入代码</h4>
+		<pre class="code">${embedCode(legacy)}</pre>
+		<button class="ghost sm" onClick=${() => copyText(embedCode(legacy))}>复制嵌入代码</button>
+	<//>`;
+}
+
 function CreateModal({ programs, onClose, onCreated }) {
-	const [programId, setProgram] = useState(programs.find((p) => p.enabled)?.id || "");
+	const real = programs.filter((p) => p.id !== "default");
+	const preferred = real.find((p) => p.enabled && p.require_token) || real.find((p) => p.enabled) || programs.find((p) => p.enabled) || programs[0];
+	const [programId, setProgram] = useState(preferred?.id || "");
 	const [hours, setHours] = useState(24);
 	const [maxUses, setMaxUses] = useState(0);
 	const [note, setNote] = useState("");
+	const prog = programs.find((p) => p.id === programId);
 	const submit = async () => {
-		const l = await run(() => api("POST", "/share-links", { programId, hours: +hours || 0, maxUses: +maxUses || 0, note }));
-		if (l) onCreated(l);
+		const l = await run(() => api("POST", "/share-links", { programId, hours: Math.max(0, +hours || 0), maxUses: Math.max(0, Math.floor(+maxUses) || 0), note: note.trim() }));
+		if (l?.path) onCreated(l);
 	};
-	return html`<${Modal} title="生成访问链接" onClose=${onClose} footer=${html`<button class="ghost" onClick=${onClose}>取消</button><button class="primary" onClick=${submit} disabled=${!programId}>生成</button>`}>
-		<${Field} label="程序"><select value=${programId} onChange=${(e) => setProgram(e.target.value)}>${programs.map((p) => html`<option value=${p.id}>${p.name}（${p.id}）</option>`)}</select><//>
-		<${Field} label="有效期（小时）" hint="0 = 永不过期"><input type="number" min="0" value=${hours} onInput=${(e) => setHours(e.target.value)} /><//>
-		<${Field} label="可用次数" hint="每次打开计 1 次，0 = 不限"><input type="number" min="0" value=${maxUses} onInput=${(e) => setMaxUses(e.target.value)} /><//>
-		<${Field} label="备注"><input value=${note} onInput=${(e) => setNote(e.target.value)} placeholder="例如 某客户演示" /><//>
+	return html`<${Modal} title="生成访问链接" onClose=${onClose} footer=${html`<button class="ghost" onClick=${onClose}>取消</button><${AsyncButton} class="primary" onClick=${submit} disabled=${!programId}>生成<//>`}>
+		<${Field} label="程序" hint=${prog && !prog.require_token ? "该程序未开启「需要访问链接」，任何人都能直接访问；链接仍可用于统计来源" : ""}>
+			<select value=${programId} onChange=${(e) => setProgram(e.target.value)}>${programs.map((p) => html`<option value=${p.id}>${p.name}（${p.id}）${p.require_token ? " · 需链接" : ""}</option>`)}</select>
+		<//>
+		<div class="row3">
+			<${Field} label="有效期（小时）" hint="0 = 永不过期"><input type="number" min="0" value=${hours} onInput=${(e) => setHours(e.target.value)} /><//>
+			<${Field} label="可用人数" hint="0 = 不限；同一观众刷新不计"><input type="number" min="0" value=${maxUses} onInput=${(e) => setMaxUses(e.target.value)} /><//>
+		</div>
+		<${Field} label="备注"><input value=${note} maxlength="200" onInput=${(e) => setNote(e.target.value)} placeholder="例如 某客户演示" /><//>
 	<//>`;
 }

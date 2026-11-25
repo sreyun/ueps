@@ -374,3 +374,53 @@ test("agent disconnect while an instance is starting does not put the GPU slot i
 		await ctx.stop();
 	}
 });
+
+test("deleting a program while viewers are watching disconnects them (no one stuck in a dead queue); new admin APIs", async () => {
+	const ctx = await startPlatform();
+	try {
+		await ctx.login();
+		await ctx.api("POST", "/api/v1/programs", { id: "gone", name: "将被删除" });
+		const ue = await wsClient(`ws://127.0.0.1:${ctx.ADMIN}/gone`);
+		await next(ue, type("config"));
+		await sleep(1700); // 像素流 1：1.5 秒后判定就绪
+		const viewer = await ctx.player("/play/gone");
+		await next(viewer, type("seticeServers"));
+		await sleep(100);
+		assert.strictEqual(ctx.app.scheduler.instances.size, 1);
+		assert.strictEqual((await ctx.api("DELETE", "/api/v1/programs/gone")).status, 200);
+		assert.strictEqual(await viewer.closed, 4000, "viewer rejected after program deletion");
+		ue.close();
+
+		// 对外访问地址：校验、保存、/auth/me 返回
+		assert.strictEqual((await ctx.api("PUT", "/api/v1/settings", { publicBaseUrl: "https://ue.example.com:8443/path" })).status, 400);
+		assert.strictEqual((await ctx.api("PUT", "/api/v1/settings", { publicBaseUrl: "https://ue.example.com:8443/" })).status, 200);
+		assert.strictEqual((await ctx.api("GET", "/api/v1/auth/me")).body.publicBaseUrl, "https://ue.example.com:8443");
+
+		// 访问链接可再次获取地址；作废后不可再获取
+		await ctx.api("POST", "/api/v1/programs", { id: "tok", require_token: true });
+		const link = (await ctx.api("POST", "/api/v1/share-links", { programId: "tok", hours: 2 })).body;
+		const again = await ctx.api("POST", `/api/v1/share-links/${link.id}/url`);
+		assert.match(again.body.path, /^\/play\/tok\?token=/);
+		const v2 = await ctx.player(again.body.path);
+		await next(v2, type("seticeServers"));
+		v2.close();
+		await ctx.api("POST", `/api/v1/share-links/${link.id}/revoke`);
+		assert.strictEqual((await ctx.api("POST", `/api/v1/share-links/${link.id}/url`)).status, 409);
+
+		// 会话导出 CSV：BOM + 表头 + 防公式注入
+		ctx.app.store.startSession({ id: "csv1", program_id: "tok", client_ip: "203.0.113.9", user_agent: "=HYPERLINK(evil)" });
+		const csv = await ctx.api("GET", "/api/v1/sessions/export?program=tok");
+		assert.strictEqual(csv.status, 200);
+		assert.match(csv.headers["content-type"], /text\/csv/);
+		assert.ok(csv.text.charCodeAt(0) === 0xfeff, "UTF-8 BOM for Excel");
+		assert.ok(csv.text.includes("203.0.113.9"));
+		assert.ok(csv.text.includes(`"'=HYPERLINK(evil)"`), "formula injection neutralised");
+
+		// 审计搜索
+		const found = (await ctx.api("GET", "/api/v1/audit?q=share")).body;
+		assert.ok(found.length > 0 && found.every((a) => /share/.test(a.action + a.target + a.username + a.ip)));
+		assert.strictEqual((await ctx.api("GET", "/api/v1/audit?q=%25")).status, 200);
+	} finally {
+		await ctx.stop();
+	}
+});

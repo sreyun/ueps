@@ -1,4 +1,4 @@
-import { html, api, run, Card, Field, useState, useStore, store, ROLE_LABEL, Badge, copyText, confirmDialog } from "../lib.js";
+import { html, api, run, Card, Field, useState, useStore, store, ROLE_LABEL, Badge, copyText, confirmDialog, AsyncButton, disconnectEvents } from "../lib.js";
 
 export function Account() {
 	const s = useStore();
@@ -7,11 +7,13 @@ export function Account() {
 		<${Totp} s=${s} />
 		<${Card} title="登录会话">
 			<p class="muted small">在其它电脑上登录过、或怀疑口令泄露时，可让所有设备上的登录立即失效（包括当前页面）。</p>
-			<button class="danger" onClick=${async () => {
-				if (!confirmDialog("确定退出所有设备上的登录？")) return;
-				await run(() => api("POST", "/auth/logout-all"));
-				store.set({ user: null, overview: null });
-			}}>退出所有设备</button>
+			<${AsyncButton} class="danger" onClick=${async () => {
+				if (!(await confirmDialog({ title: "退出所有设备", text: "所有设备上的登录（包括当前页面）将立即失效，需要重新登录。确定？", okText: "全部退出" }))) return;
+				if (await run(() => api("POST", "/auth/logout-all"))) {
+					disconnectEvents();
+					store.set({ user: null, overview: null });
+				}
+			}}>退出所有设备<//>
 		<//>
 	`;
 }
@@ -53,7 +55,10 @@ function Totp({ s }) {
 	const [code, setCode] = useState("");
 	const [password, setPassword] = useState("");
 	const enabled = !!s.user.totp;
-	const start = async () => setSetup(await run(() => api("POST", "/auth/totp/setup")));
+	const start = async () => {
+		const r = await run(() => api("POST", "/auth/totp/setup"));
+		if (r?.secret) setSetup(r);
+	};
 	const enable = async () => {
 		if (await run(() => api("POST", "/auth/totp/enable", { code }), "两步验证已开启，下次登录需要输入验证码")) {
 			store.set({ user: { ...s.user, totp: true } });
@@ -72,10 +77,10 @@ function Totp({ s }) {
 		${enabled
 			? html`<div class="narrow">
 					<${Field} label="输入当前口令以关闭"><input type="password" value=${password} onInput=${(e) => setPassword(e.target.value)} /><//>
-					<button class="danger" disabled=${!password} onClick=${disable}>关闭两步验证</button>
+					<${AsyncButton} class="danger" disabled=${!password} onClick=${disable}>关闭两步验证<//>
 				</div>`
 			: !setup
-			? html`<button class="primary" onClick=${start}>开启两步验证</button>`
+			? html`<${AsyncButton} class="primary" onClick=${start}>开启两步验证<//>`
 			: html`<div class="narrow">
 					<ol class="steps">
 						<li>在验证器 App 中选择"手动输入密钥"，账户填 <b>${s.user.username}</b>，密钥：<pre class="code">${setup.secret}</pre><button class="ghost sm" onClick=${() => copyText(setup.secret)}>复制密钥</button></li>
@@ -83,7 +88,7 @@ function Totp({ s }) {
 						<li>输入 App 显示的 6 位验证码完成开启（10 分钟内有效）：</li>
 					</ol>
 					<${Field} label="验证码"><input inputmode="numeric" maxlength="6" value=${code} onInput=${(e) => setCode(e.target.value.replace(/\D/g, ""))} /><//>
-					<button class="primary" disabled=${code.length !== 6} onClick=${enable}>确认开启</button>
+					<${AsyncButton} class="primary" disabled=${code.length !== 6} onClick=${enable}>确认开启<//>
 				</div>`}
 	<//>`;
 }

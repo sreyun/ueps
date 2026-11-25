@@ -27,7 +27,7 @@ const { createLogger } = require("./logger.js");
 const { firstLanIPv4, ipInList, randomSecret, throttle } = require("./util.js");
 const { createAgent } = require("../agent/agent.js");
 
-const VERSION = "1.1.0";
+const VERSION = "1.2.0";
 
 function createApp({ config, assetsDir, log, selfCommand, env = process.env }) {
 	log = log || createLogger({ level: config.log.level, dir: config.log.file ? path.join(config.dataDir, "logs") : null, retentionDays: config.log.retentionDays });

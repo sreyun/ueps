@@ -13,6 +13,7 @@ const DEFAULTS = {
 		host: "0.0.0.0",
 		publicPort: 8088, // 观众专用口（nginx 反代到这里）
 		publicHost: "127.0.0.1",
+		publicBaseUrl: "", // 首次启动写入"系统设置 → 对外访问地址"，例如 https://ue.example.com:8443（之后以管理端为准）
 		tls: null, // { cert, key, admin:false }：不经 nginx 直接提供 https/wss。默认只作用于观众口；admin:true 时管理口也启用（UE 需用 wss:// 连接）
 	},
 	site: {
@@ -73,6 +74,7 @@ function applyEnv(c, env) {
 	if (env.PS_HOST) c.http.host = env.PS_HOST;
 	if (env.PS_PUBLIC_PORT) c.http.publicPort = +env.PS_PUBLIC_PORT;
 	if (env.PS_PUBLIC_HOST) c.http.publicHost = env.PS_PUBLIC_HOST;
+	if (env.PS_PUBLIC_BASE_URL) c.http.publicBaseUrl = env.PS_PUBLIC_BASE_URL;
 	if (env.PS_UE_HOST) c.gateway.ueHost = env.PS_UE_HOST;
 	if (env.PS_ADMIN_ALLOW) c.security.adminAllow = list(env.PS_ADMIN_ALLOW);
 	if (env.PS_ENGINE_ALLOW) c.security.engineAllow = list(env.PS_ENGINE_ALLOW);

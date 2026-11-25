@@ -1,13 +1,13 @@
 # ps-platform 安装部署与运维手册
 
-> 适用版本：ps-platform 1.1.0　|　运行环境：Node.js ≥ 22.13（或直接使用打包好的 `ps-platform.exe`，无需安装 Node.js）
+> 适用版本：ps-platform 1.2.0　|　运行环境：Node.js ≥ 22.13（或直接使用打包好的 `ps-platform.exe`，无需安装 Node.js）
 
 目录
 
 1. [架构与端口](#1-架构与端口)
 2. [环境要求](#2-环境要求)
 3. [方式 A：Linux 网关 + docker-compose（推荐）](#3-方式-alinux-网关--docker-compose推荐)
-4. [方式 B：Windows / Linux 直接运行（exe 或 Node.js）](#4-方式-bwindows--linux-直接运行exe-或-nodejs)
+4. [方式 B：Windows / Linux 直接运行（可执行程序或 Node.js）](#4-方式-bwindows--linux-直接运行可执行程序或-nodejs)
 5. [渲染机接入（Agent）](#5-渲染机接入agent)
 6. [配置参考](#6-配置参考)
 7. [访问地址与嵌入其它系统](#7-访问地址与嵌入其它系统)（含管理端使用要点）
@@ -112,6 +112,8 @@ curl -s http://127.0.0.1:88/healthz    # 含版本、Agent 数、TURN 状态
 
 管理端：`http://<LAN_IP>:88/admin/`（用户名 `admin`）。观众：`https://<域名或 IP[:映射端口]>/`。
 
+首次登录后按「概览 → 开始使用」引导完成：① 系统设置 → 访问与嵌入 → 填写**对外访问地址**（观众访问 nginx 的地址，用于生成播放地址与嵌入代码；也可在 `.env` 中用 `PS_PUBLIC_BASE_URL` 预置）；② 接入渲染机；③ 新建程序；④ 在「程序与访问」点击「访问」复制播放地址 / 嵌入代码。
+
 ### 3.4 没有 UE 时先看效果（演示叠加）
 
 ```bash
@@ -140,15 +142,24 @@ cd deploy && docker compose up -d --build
 
 平台重启期间观众会断开并自动重连；渲染机上正在运行的 UE **不会被杀掉**，平台启动后自动接管（日志 `接管 … 仍在运行的实例`）。
 
-## 4. 方式 B：Windows / Linux 直接运行（exe 或 Node.js）
+## 4. 方式 B：Windows / Linux 直接运行（可执行程序或 Node.js）
 
 ### 4.1 获取程序
 
-- 打包好的版本：`dist/` 目录（`ps-platform.exe` + `admin/` + `public/` + `nginx/` + `config.example.json`），整个目录拷贝即可。
-- 自行打包：`npm install && npm run build:exe`（需 Node.js ≥ 25.5；在哪个系统打包就生成哪个系统的可执行文件）。
+| 系统 | 发布包 | 可执行文件 |
+|---|---|---|
+| Windows x64（10 / Server 2016 及以上） | `ps-platform-<版本>-windows-x64.zip` | `ps-platform.exe` |
+| Linux x64（glibc ≥ 2.28：CentOS/RHEL 8+、Ubuntu 20.04+、Debian 10+、麒麟/统信等） | `ps-platform-<版本>-linux-x64.tar.gz` | `ps-platform`（无扩展名） |
+
+发布包内含：可执行文件（无需安装 Node.js）、`admin/`、`public/`、`config.example.json`、`nginx/`、`docs/`、`运行说明.txt`。整个目录拷贝到目标机器即可。
+
+- 获取：从发布页（GitHub Releases）下载，或自行打包。
+- 自行打包：`npm install && npm run build:exe`（需 Node.js ≥ 25.5）。**在哪个系统打包就生成哪个系统的程序**：Windows 上得到 `.exe`，Linux 上得到无扩展名的可执行文件（Linux 请用 glibc 版 Node，例如 `docker run --rm -v $PWD:/src -w /src node:26-bookworm-slim sh -c "npm ci && npm run build:exe"`）。产物在 `dist/`。
 - 源码运行：`npm install --omit=dev && node server.js`（Node.js ≥ 22.13）。
 
 ### 4.2 配置与启动
+
+Windows：
 
 ```powershell
 cd D:\ps-platform
@@ -156,11 +167,21 @@ copy config.example.json config.json    # 按第 6 节修改
 .\ps-platform.exe
 ```
 
-首次启动会在 `data\` 下创建数据库，并把随机的 admin 口令写到 `data\initial-admin.txt`（或启动前设置环境变量 `PS_ADMIN_PASSWORD`）。登录后请立即修改口令并删除该文件。
+Linux：
+
+```bash
+tar -xzf ps-platform-<版本>-linux-x64.tar.gz -C /opt && cd /opt/ps-platform-<版本>-linux-x64
+cp config.example.json config.json      # 按第 6 节修改（Linux 上通常 localAgent.enable=false，渲染机另行接入）
+./ps-platform
+```
+
+首次启动会在 `data/` 下创建数据库，并把随机的 admin 口令写到 `data/initial-admin.txt`（或启动前设置环境变量 `PS_ADMIN_PASSWORD`）。登录后请立即修改口令并删除该文件。
 
 单机部署（网关与 UE 在同一台 Windows）：保持 `localAgent.enable: true`，平台内置"本机"Agent，**无需另外运行 Agent**；把 UE 所在目录写进 `localAgent.allowExe`。
 
-### 4.3 注册为 Windows 服务（NSSM）
+### 4.3 注册为系统服务（开机自启）
+
+Windows（NSSM）：
 
 ```powershell
 nssm install ps-platform D:\ps-platform\ps-platform.exe
@@ -169,6 +190,31 @@ nssm set ps-platform AppStopMethodConsole 5000      # 正常停止：平台会�
 nssm set ps-platform AppExit Default Restart
 nssm start ps-platform
 ```
+
+Linux（systemd）：
+
+```ini
+# /etc/systemd/system/ps-platform.service
+[Unit]
+Description=ps-platform
+After=network-online.target
+
+[Service]
+WorkingDirectory=/opt/ps-platform
+ExecStart=/opt/ps-platform/ps-platform
+Restart=always
+RestartSec=3
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+systemctl daemon-reload && systemctl enable --now ps-platform && journalctl -u ps-platform -f
+```
+
+监听 1024 以下端口（默认管理口 88）需要 root，或改用 ≥1024 的端口，或 `setcap 'cap_net_bind_service=+ep' /opt/ps-platform/ps-platform`。
 
 ### 4.4 nginx（Windows）
 
@@ -184,7 +230,8 @@ ps-platform.exe --agent --url ws://192.168.1.10:88/agent --token <令牌> --id r
 ```
 
 ```bash
-node agent/agent.js --url ws://192.168.1.10:88/agent --token <令牌> --id render-01 --allow-exe /opt/ue/
+./ps-platform --agent --url ws://192.168.1.10:88/agent --token <令牌> --id render-01 --allow-exe /opt/ue/
+# 或用源码：node agent/agent.js --url ... （Node.js ≥ 22.13）
 ```
 
 | 参数 | 说明 |
@@ -243,6 +290,7 @@ UE 由平台按程序配置拉起，平台自动追加：`-PixelStreamingURL=ws:
 | `PS_LOCAL_AGENT` `PS_LOCAL_AGENT_ALLOW_EXE` | 本机 Agent |
 | `PS_TLS_CERT` `PS_TLS_KEY` `PS_TLS_ADMIN` | 内置 TLS |
 | `PS_ADMIN_PASSWORD` | 首次启动的 admin 口令 |
+| `PS_PUBLIC_BASE_URL` | 首次启动写入的「对外访问地址」，例如 `https://ue.example.com:8443`（之后以管理端为准） |
 | `PS_JWT_SECRET` `PS_AGENT_TOKEN` `TURN_SECRET` | 固定密钥（默认随机生成存数据库） |
 | `TURN_BUILTIN` `TURN_LISTEN` `TURN_RELAY_IP` `TURN_MIN_PORT` `TURN_MAX_PORT` `TURN_WORKERS` `TURN_ALLOWED_PEERS` | 内置 TURN |
 | `TURN_FORCE_RELAY` | false / true / external |
@@ -264,7 +312,7 @@ TURN/ICE 服务器（`{host}`/`{port}` 自动替换为浏览器实际访问的�
 | `http(s)://<主机>:<端口>/play/<程序ID>` | 推荐的新写法 |
 | `http(s)://<主机>:<端口>/<程序ID>` | 兼容写法 |
 | 追加 `&token=…` | 程序设置了"需要访问链接"时，用管理端「访问链接」生成的令牌 |
-| 追加 `stats=1` / `relay=1` | 显示状态浮层 / 强制只走中继 |
+| 追加 `stats=1` / `relay=1` / `ui=0` | 显示状态浮层 / 强制只走中继 / 隐藏播放页控制栏（嵌入时使用） |
 
 - **从企业版迁移**：在新平台创建与原 `urlPrefix` 同名的程序即可。程序 ID 不区分大小写（`JJQ` 保存为 `jjq`，`urlPrefix=JJQ`、`/play/jjq`、`/JJQ` 都能访问）。
 - **嵌入**：
@@ -274,6 +322,8 @@ TURN/ICE 服务器（`{host}`/`{port}` 自动替换为浏览器实际访问的�
         allow="autoplay; fullscreen; clipboard-read; clipboard-write" style="border:0;width:100%;height:100%"></iframe>
 ```
 
+- **在管理端获取**：「程序与访问」每个程序的「访问」按钮列出推荐地址、企业版兼容地址、全屏演示页与 iframe 嵌入代码（基于「对外访问地址」生成，一键复制）；需要访问链接的程序可在面板中直接生成带令牌的地址。
+- **播放页体验**：显示连接进度（连接 → 分配实例 → 建立画面）与排队人数；浏览器拦截自动播放时提示"点击开始观看"/"开启声音"；无操作自动断开前 30 秒倒计时；被拒绝/踢出/链接失效时给出明确原因并停止自动重连，可一键重新连接。
 - **全屏嵌入效果演示**：`http(s)://<主机>:<端口>/embed-demo.html?urlPrefix=<程序ID>[&token=…]`——模拟业务系统把画面全屏嵌入，点击进入浏览器全屏，顶部工具栏可查看/复制嵌入代码。
 - **http 还是 https**：业务系统是 http 页面 → 两种都能嵌；业务系统是 **https 页面 → 必须嵌 https 地址**（浏览器禁止混合内容），且需要**受信任的证书**（域名证书）：iframe 里的自签名证书错误页无法点"继续访问"。只有 IP、没有正式证书时请让业务系统用 http 嵌入，或给网关配一个域名证书。
 - 播放页不发送 `X-Frame-Options`，可被任意系统嵌入；如需限制嵌入方，在 nginx 的 server 中加 `add_header Content-Security-Policy "frame-ancestors https://oa.example.com" always;`。

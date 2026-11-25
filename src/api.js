@@ -79,7 +79,7 @@ function registerApi(router, ctx) {
 		"/api/v1/auth/me",
 		async (req, res) => {
 			const u = req.user.token ? null : store.getUser(req.user.id);
-			sendJson(res, 200, { user: { ...req.user, totp: !!u?.totp_secret }, mustChangePassword: u ? !!store.getSetting(`mustChange:${u.id}`) : false, version });
+			sendJson(res, 200, { user: { ...req.user, totp: !!u?.totp_secret }, mustChangePassword: u ? !!store.getSetting(`mustChange:${u.id}`) : false, version, publicBaseUrl: settings.get().publicBaseUrl || "" });
 		},
 		{ role: "viewer" }
 	);
@@ -254,7 +254,7 @@ function registerApi(router, ctx) {
 				url: `${scheme}://${host}/agent`,
 				token: isAdmin ? secrets.agentToken : null,
 				windows: `ps-platform.exe --agent --url ${scheme}://${host}/agent --token ${tok} --id render-01 --allow-exe "D:\\UEProject\\"`,
-				linux: `node agent/agent.js --url ${scheme}://${host}/agent --token ${tok} --id render-01 --allow-exe /opt/ue/`,
+				linux: `./ps-platform --agent --url ${scheme}://${host}/agent --token ${tok} --id render-01 --allow-exe /opt/ue/`,
 			});
 		},
 		{ role: "operator" }
@@ -281,6 +281,41 @@ function registerApi(router, ctx) {
 		{ role: "operator" }
 	);
 	router.get("/api/v1/sessions/history", async (req, res, { query }) => sendJson(res, 200, store.querySessions(query)), { role: "viewer" });
+	// 导出 CSV（Excel 直接打开：UTF-8 BOM + CRLF），最多 10 万行
+	router.get(
+		"/api/v1/sessions/export",
+		async (req, res, { query }) => {
+			const rows = store.exportSessions(query);
+			const cols = [
+				["开始时间", (r) => new Date(r.started_at).toLocaleString("zh-CN", { hour12: false })],
+				["结束时间", (r) => (r.ended_at ? new Date(r.ended_at).toLocaleString("zh-CN", { hour12: false }) : "")],
+				["时长(秒)", (r) => (r.ended_at ? Math.round((r.ended_at - r.started_at) / 1000) : "")],
+				["程序", (r) => r.program_id],
+				["观众 IP", (r) => r.client_ip],
+				["外网", (r) => (r.external ? "是" : "否")],
+				["实例", (r) => r.instance_id || ""],
+				["机器", (r) => r.machine_id || ""],
+				["链路", (r) => r.transport || ""],
+				["平均码率(kbps)", (r) => r.avg_kbps ?? ""],
+				["平均延迟(ms)", (r) => r.avg_rtt_ms ?? ""],
+				["平均帧率", (r) => r.avg_fps ?? ""],
+				["结束原因", (r) => r.end_reason || ""],
+				["访问链接", (r) => r.share_link_id || ""],
+				["浏览器", (r) => r.user_agent || ""],
+			];
+			const cell = (v) => {
+				let s = String(v ?? "");
+				if (/^[=+\-@\t\r]/.test(s)) s = "'" + s; // 防 CSV 公式注入（Excel 会执行以 = + - @ 开头的单元格）
+				return /[",\r\n]/.test(s) || s.startsWith("'") ? '"' + s.replace(/"/g, '""') + '"' : s;
+			};
+			const NL = String.fromCharCode(13, 10);
+			const body = String.fromCharCode(0xfeff) + [cols.map((c) => c[0]).join(","), ...rows.map((r) => cols.map((c) => cell(c[1](r))).join(","))].join(NL) + NL;
+			audit(req, "session.export", query.program || "", { rows: rows.length });
+			res.writeHead(200, { "Content-Type": "text/csv; charset=utf-8", "Cache-Control": "no-store", "Content-Disposition": `attachment; filename="sessions-${new Date().toISOString().slice(0, 10)}.csv"` });
+			res.end(body);
+		},
+		{ role: "viewer" }
+	);
 	router.get(
 		"/api/v1/sessions/stats",
 		async (req, res, { query }) => {
@@ -304,6 +339,20 @@ function registerApi(router, ctx) {
 			const token = signJwt({ typ: "share", pid, lid: id }, secrets.jwt, hours ? hours * 3600 : 0);
 			audit(req, "share.create", id, { programId: pid, hours, maxUses: link.max_uses });
 			sendJson(res, 201, { ...link, path: `/play/${encodeURIComponent(pid)}?token=${token}` });
+		},
+		{ role: "operator" }
+	);
+	// 重新获取已有链接的地址（令牌按原有效期重新签发；原链接仍然有效），避免"只显示一次"导致丢失后只能重建
+	router.post(
+		"/api/v1/share-links/:id/url",
+		async (req, res, { params }) => {
+			const link = store.getShareLink(params.id);
+			if (!link) throw httpErr(404, "链接不存在");
+			if (link.revoked) throw httpErr(409, "链接已作废");
+			const left = link.expires_at ? Math.floor((link.expires_at - Date.now()) / 1000) : 0;
+			if (link.expires_at && left <= 0) throw httpErr(409, "链接已过期");
+			const token = signJwt({ typ: "share", pid: link.program_id, lid: link.id }, secrets.jwt, left > 0 ? left : 0);
+			sendJson(res, 200, { path: `/play/${encodeURIComponent(link.program_id)}?token=${token}` });
 		},
 		{ role: "operator" }
 	);

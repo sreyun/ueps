@@ -55,6 +55,7 @@ const child = spawn(
 		"--disable-renderer-backgrounding",
 		"--disable-backgrounding-occluded-windows",
 		"--allow-file-access-from-files",
+		...(process.env.FAKE_UE_DEBUG_PORT ? [`--remote-debugging-port=${process.env.FAKE_UE_DEBUG_PORT}`] : []), // 调试：可用 DevTools 查看替身 UE 的页面日志
 		page.href,
 	],
 	{ stdio: "ignore" }

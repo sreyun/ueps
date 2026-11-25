@@ -2,55 +2,103 @@
 <html lang="zh-CN">
 	<head>
 		<meta charset="utf-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<title>云渲染门户</title>
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+		<title>云渲染</title>
 		<link rel="icon" href="/favicon.svg" />
+		<!-- 观众门户：列出"在门户展示"且无需访问链接的程序。只有一个程序时直接进入（加 ?portal 可停留在本页）。
+		     可在数据目录 www/index.html 放置自定义首页替换本页。 -->
 		<style>
 			:root { color-scheme: dark; }
-			body { margin: 0; min-height: 100vh; background: linear-gradient(160deg, #0b1220, #05070a); color: #e8eaed; font: 15px/1.6 system-ui, "Microsoft YaHei", sans-serif; }
-			main { max-width: 1080px; margin: 0 auto; padding: 48px 24px; }
-			h1 { font-size: 26px; font-weight: 600; margin: 0 0 6px; }
-			p.lead { opacity: .6; margin: 0 0 32px; }
-			.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
-			a.card { display: block; padding: 20px; border-radius: 12px; background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.08); color: inherit; text-decoration: none; transition: border-color .2s, transform .2s; }
-			a.card:hover { border-color: #4f8cff; transform: translateY(-2px); }
-			a.card h2 { font-size: 17px; margin: 0 0 6px; }
-			a.card p { margin: 0; opacity: .6; font-size: 13px; min-height: 2.6em; }
-			.tag { display: inline-block; margin-top: 12px; font-size: 12px; padding: 2px 8px; border-radius: 99px; background: rgba(79,140,255,.15); color: #8fb4ff; }
-			.empty { opacity: .5; }
+			* { box-sizing: border-box; }
+			body { margin: 0; min-height: 100vh; background: radial-gradient(1200px 600px at 20% -10%, #18264a 0%, transparent 60%), linear-gradient(170deg, #0b1220, #05070a); color: #e8eaed; font: 15px/1.6 system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+			header { max-width: 1140px; margin: 0 auto; padding: 22px 24px 0; display: flex; align-items: center; gap: 10px; }
+			.logo { width: 30px; height: 30px; border-radius: 8px; background: linear-gradient(135deg, #4f8cff, #7c5cff); display: grid; place-items: center; font-size: 12px; color: #fff; }
+			.brand { font-weight: 650; letter-spacing: .02em; }
+			main { max-width: 1140px; margin: 0 auto; padding: 36px 24px 56px; }
+			h1 { font-size: 30px; font-weight: 650; margin: 0 0 6px; }
+			.lead { opacity: .62; margin: 0 0 26px; }
+			.bar { display: flex; gap: 12px; align-items: center; margin-bottom: 18px; flex-wrap: wrap; }
+			.bar input { flex: 1; min-width: 200px; max-width: 360px; font: inherit; color: inherit; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.12); border-radius: 10px; padding: 9px 14px; outline: none; }
+			.bar input:focus { border-color: #4f8cff; }
+			.count { opacity: .5; font-size: 13px; }
+			.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 18px; }
+			a.card { display: flex; flex-direction: column; border-radius: 14px; overflow: hidden; background: rgba(255,255,255,.035); border: 1px solid rgba(255,255,255,.08); color: inherit; text-decoration: none; transition: border-color .2s, transform .2s, box-shadow .2s; }
+			a.card:hover, a.card:focus-visible { border-color: #4f8cff; transform: translateY(-3px); box-shadow: 0 14px 34px rgba(0,0,0,.4); outline: none; }
+			.thumb { aspect-ratio: 16 / 9; display: grid; place-items: center; position: relative; font-size: 40px; font-weight: 700; color: rgba(255,255,255,.9); }
+			.thumb::after { content: "▶"; position: absolute; right: 12px; bottom: 10px; width: 34px; height: 34px; border-radius: 50%; background: rgba(0,0,0,.45); display: grid; place-items: center; font-size: 13px; opacity: 0; transition: opacity .2s; }
+			a.card:hover .thumb::after { opacity: 1; }
+			.body { padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 4px; flex: 1; }
+			.body h2 { font-size: 16px; margin: 0; }
+			.body p { margin: 0; opacity: .6; font-size: 13px; flex: 1; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+			.go { margin-top: 10px; font-size: 13px; color: #8fb4ff; }
+			.state { text-align: center; opacity: .6; padding: 60px 20px; border: 1px dashed rgba(255,255,255,.12); border-radius: 14px; }
+			.skeleton { height: 220px; border-radius: 14px; background: linear-gradient(90deg, rgba(255,255,255,.03), rgba(255,255,255,.07), rgba(255,255,255,.03)); background-size: 200% 100%; animation: sk 1.2s infinite; }
+			@keyframes sk { to { background-position: -200% 0; } }
+			footer { text-align: center; opacity: .35; font-size: 12px; padding: 0 0 28px; }
+			@media (max-width: 600px) { h1 { font-size: 24px; } main { padding-top: 24px; } }
 		</style>
 	</head>
 	<body>
+		<header><div class="logo">▶</div><div class="brand">云渲染</div></header>
 		<main>
-			<h1>云渲染</h1>
-			<p class="lead">选择要进入的场景</p>
-			<div class="grid" id="list"><div class="empty">加载中…</div></div>
+			<h1>选择要进入的场景</h1>
+			<p class="lead">在浏览器中直接操作三维场景，无需安装任何软件</p>
+			<div class="bar" id="bar" hidden><input id="q" type="search" placeholder="搜索场景名称…" autocomplete="off" /><span class="count" id="count"></span></div>
+			<div class="grid" id="list"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
 		</main>
+		<footer>建议使用 Chrome / Edge 最新版浏览器</footer>
 		<script>
+			const el = document.getElementById("list");
+			const state = (text) => {
+				el.textContent = "";
+				const d = document.createElement("div");
+				d.className = "state";
+				d.style.gridColumn = "1 / -1";
+				d.textContent = text;
+				el.append(d);
+			};
+			// 根据程序 ID 生成稳定的渐变色缩略图
+			const hue = (s) => [...s].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7);
+			const render = (list, kw = "") => {
+				const shown = list.filter((p) => !kw || (p.name + " " + p.id + " " + (p.description || "")).toLowerCase().includes(kw.toLowerCase()));
+				document.getElementById("count").textContent = kw ? `找到 ${shown.length} 个` : `共 ${list.length} 个场景`;
+				if (!shown.length) return state(kw ? "没有找到匹配的场景" : "暂无可直接访问的场景，请使用管理员提供的访问链接。");
+				el.textContent = "";
+				for (const p of shown) {
+					const a = document.createElement("a");
+					a.className = "card";
+					a.href = `/play/${encodeURIComponent(p.id)}`;
+					const t = document.createElement("div");
+					t.className = "thumb";
+					const h = hue(p.id);
+					t.style.background = `linear-gradient(135deg, hsl(${h},55%,32%), hsl(${(h + 50) % 360},60%,18%))`;
+					t.textContent = (p.name || p.id).trim().slice(0, 1).toUpperCase();
+					const b = document.createElement("div");
+					b.className = "body";
+					const h2 = document.createElement("h2");
+					h2.textContent = p.name || p.id;
+					const d = document.createElement("p");
+					d.textContent = p.description || " ";
+					const go = document.createElement("span");
+					go.className = "go";
+					go.textContent = "进入场景 →";
+					b.append(h2, d, go);
+					a.append(t, b);
+					el.append(a);
+				}
+			};
 			fetch("/api/v1/public/programs")
-				.then((r) => r.json())
+				.then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.status))))
 				.then((list) => {
-					const el = document.getElementById("list");
-					el.textContent = "";
 					const open = list.filter((p) => !p.requireToken);
-					if (!open.length) return (el.innerHTML = '<div class="empty">暂无可直接访问的场景，请使用管理员提供的访问链接。</div>');
 					if (open.length === 1 && !new URLSearchParams(location.search).has("portal")) return location.replace(`/play/${encodeURIComponent(open[0].id)}`);
-					for (const p of open) {
-						const a = document.createElement("a");
-						a.className = "card";
-						a.href = `/play/${encodeURIComponent(p.id)}`;
-						const h = document.createElement("h2");
-						h.textContent = p.name;
-						const d = document.createElement("p");
-						d.textContent = p.description || "";
-						const t = document.createElement("span");
-						t.className = "tag";
-						t.textContent = "进入";
-						a.append(h, d, t);
-						el.append(a);
+					if (open.length > 6) {
+						document.getElementById("bar").hidden = false;
+						document.getElementById("q").addEventListener("input", (e) => render(open, e.target.value.trim()));
 					}
+					render(open);
 				})
-				.catch(() => (document.getElementById("list").textContent = "加载失败"));
+				.catch(() => state("加载失败，请稍后刷新页面重试"));
 		</script>
 	</body>
 </html>

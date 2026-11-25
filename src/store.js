@@ -390,7 +390,7 @@ class Store {
 	querySessions({ program, from, to, ip, limit = 50, offset = 0 } = {}) {
 		const where = ["1=1"];
 		const args = [];
-		if (program) where.push("program_id = ?") && args.push(program);
+		if (program) where.push("program_id = ?") && args.push(String(program).toLowerCase());
 		if (from) where.push("started_at >= ?") && args.push(+from);
 		if (to) where.push("started_at <= ?") && args.push(+to);
 		if (ip) where.push("client_ip LIKE ?") && args.push(`%${ip}%`);
@@ -476,8 +476,23 @@ class Store {
 			entry.detail ? JSON.stringify(entry.detail) : ""
 		);
 	}
-	listAudit({ limit = 100, offset = 0 } = {}) {
-		return this.q("SELECT * FROM audit ORDER BY id DESC LIMIT ? OFFSET ?").all(clampInt(limit, 1, 500, 100), clampInt(offset, 0, 1e9, 0));
+	listAudit({ limit = 100, offset = 0, q = "" } = {}) {
+		const n = clampInt(limit, 1, 500, 100);
+		const off = clampInt(offset, 0, 1e9, 0);
+		const kw = String(q || "").trim().slice(0, 64);
+		if (!kw) return this.q("SELECT * FROM audit ORDER BY id DESC LIMIT ? OFFSET ?").all(n, off);
+		const like = `%${kw.replace(/[%_!]/g, (c) => "!" + c)}%`; // 关键字中的通配符按字面匹配
+		return this.q("SELECT * FROM audit WHERE username LIKE ? ESCAPE '!' OR action LIKE ? ESCAPE '!' OR target LIKE ? ESCAPE '!' OR ip LIKE ? ESCAPE '!' ORDER BY id DESC LIMIT ? OFFSET ?").all(like, like, like, like, n, off);
+	}
+	/** 导出会话（CSV 用），最多 max 行 */
+	exportSessions({ program, from, to, ip } = {}, max = 100000) {
+		const where = ["1=1"];
+		const args = [];
+		if (program) where.push("program_id = ?") && args.push(String(program).toLowerCase());
+		if (from) where.push("started_at >= ?") && args.push(+from);
+		if (to) where.push("started_at <= ?") && args.push(+to);
+		if (ip) where.push("client_ip LIKE ?") && args.push(`%${ip}%`);
+		return this.db.prepare(`SELECT * FROM sessions WHERE ${where.join(" AND ")} ORDER BY started_at DESC LIMIT ?`).all(...args, max);
 	}
 }
 

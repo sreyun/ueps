@@ -10,9 +10,9 @@
 - **按需调度**：独占（一人一实例）/ 共享（多人同看）；预热（可按时段）、空闲回收、排队、失败换 GPU/机器重试、排空；按 GPU 显存/利用率放置，支持手动定义 GPU。
 - **稳定**：平台或 Agent 重启后自动接管仍在运行的 UE（不重复拉起、不留孤儿进程）；僵尸 UE 重连被拒；心跳检测；TURN 子进程守护。
 - **安全**：管理端/UE/Agent 只在内网口；观众口与管理口分离；scrypt 口令、两步验证、会话吊销、按 IP + 用户名的登录锁定、CSRF 防护、API 令牌、访问链接、IP 白名单、限流、审计；Agent 可执行文件目录白名单、参数数组启动（无 shell 注入）。
-- **好用**：Web 管理端（概览、实例、程序、机器/GPU、观众会话与质量、访问链接、用户、设置、运行日志、审计）、告警（企业微信/钉钉/飞书/Webhook）、Prometheus 指标、备份恢复、自定义网页托管、企业版兼容接口（寻路、坐标转换）。
+- **好用**：Web 管理端（首次使用引导、健康横幅、概览、程序与访问〔一键复制播放地址 / 嵌入代码〕、实例、机器/GPU、观众会话与质量〔CSV 导出〕、访问链接、用户、设置、运行日志、审计〔可搜索〕；适配手机）、告警（企业微信/钉钉/飞书/Webhook）、Prometheus 指标、备份恢复、自定义网页托管、企业版兼容接口（寻路、坐标转换）。
 - **性能**：1000 并发观众 p99 ≈ 300ms 拿到画面协商，平台内存约 120MB（见 docs/INSTALL.md §12）。
-- **部署**：单文件 `ps-platform.exe`（无需 Node.js）或 docker-compose；兼容 UE4.27 / UE5 像素流 1 / UE5.5 像素流 2。
+- **部署**：单文件可执行程序（Windows `ps-platform.exe` / Linux `ps-platform`，无需 Node.js）或 docker-compose；兼容 UE4.27 / UE5 像素流 1 / UE5.5 像素流 2。
 
 ## 快速开始
 
@@ -30,7 +30,9 @@ copy config.example.json config.json   # 修改 localAgent.allowExe 为 UE 所�
 .\ps-platform.exe                       # 管理端 http://<本机IP>:88/admin/ ，初始口令见 data\initial-admin.txt
 ```
 
-渲染机接入：管理端「机器 / GPU → 接入渲染机」复制命令，在渲染机执行 `ps-platform.exe --agent --url ws://<网关>:88/agent --token <令牌> --allow-exe "D:\UE\"`。
+渲染机接入：管理端「渲染机 / GPU → 接入渲染机」复制命令，在渲染机执行（Windows）`ps-platform.exe --agent --url ws://<网关>:88/agent --token <令牌> --allow-exe "D:\UE\"` 或（Linux）`./ps-platform --agent --url ws://<网关>:88/agent --token <令牌> --allow-exe /opt/ue/`。
+
+发布包：Windows `ps-platform-<版本>-windows-x64.zip`（内含 `ps-platform.exe`）、Linux `ps-platform-<版本>-linux-x64.tar.gz`（内含 `ps-platform`），见 GitHub Releases 或 `npm run build:exe` 自行打包。
 
 ## 文档
 

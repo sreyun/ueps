@@ -65,6 +65,7 @@ function defaultRuntime(config) {
 	}
 	for (const s of config.turn.servers || []) servers.push(structuredClone(s)); // config.json / DC_TURN_URLS 指定的数据中心 STUN/TURN
 	return {
+		publicBaseUrl: config.http.publicBaseUrl || "", // 观众访问的对外地址（nginx 域名/IP + 端口），管理端据此生成可复制的播放地址与嵌入代码
 		turn: { forceRelay: config.turn.forceRelay ?? false, ttl: 86400, ueTtl: 2592000, servers },
 		iceServers: [],
 		ueIceServers: null,
@@ -81,6 +82,7 @@ function defaultRuntime(config) {
 
 function validateRuntime(r) {
 	const errs = [];
+	if (r.publicBaseUrl && !/^https?:\/\/[^/\s?#]+$/i.test(r.publicBaseUrl)) errs.push("publicBaseUrl 须为 http(s)://主机[:端口]，不带路径，例如 https://ue.example.com:8443");
 	const t = r.turn || {};
 	if (![false, true, "external"].includes(t.forceRelay)) errs.push("turn.forceRelay 取值：false / true / \"external\"");
 	for (const k of ["ttl", "ueTtl"]) if (t[k] !== undefined && !(Number.isInteger(t[k]) && t[k] >= 60)) errs.push(`turn.${k} 必须是 ≥60 的整数（秒）`);
@@ -145,6 +147,7 @@ class Settings {
 		}
 		for (const k of ["iceServers", "ueIceServers"]) if (patch[k] !== undefined) next[k] = Array.isArray(patch[k]) ? unmask(patch[k], this.raw[k]) : patch[k];
 		if (patch.maxPlayersPerIp !== undefined) next.maxPlayersPerIp = patch.maxPlayersPerIp;
+		if (patch.publicBaseUrl !== undefined) next.publicBaseUrl = String(patch.publicBaseUrl || "").trim().replace(/\/+$/, "");
 		if (patch.security) next.security = { ...next.security, ...patch.security, rateLimit: { ...next.security.rateLimit, ...(patch.security.rateLimit || {}) } };
 		if (patch.alerts) next.alerts = { ...next.alerts, ...patch.alerts };
 		validateRuntime(next);

@@ -23,7 +23,7 @@ curl -H "Authorization: Bearer $TOKEN" http://192.168.1.10:88/api/v1/overview
 |---|---|---|---|
 | POST | `/auth/login` | 公开 | `{username,password,code?}`；开启两步验证时先返回 401 `{totpRequired:true}` |
 | POST | `/auth/logout` · `/auth/logout-all` | viewer | 退出 / 让本人所有设备登录失效 |
-| GET | `/auth/me` | viewer | 当前用户 |
+| GET | `/auth/me` | viewer | 当前用户、版本、对外访问地址 publicBaseUrl |
 | POST | `/auth/password` | viewer | `{oldPassword,newPassword}` |
 | POST | `/auth/totp/setup` · `/auth/totp/enable` · `/auth/totp/disable` | viewer | 两步验证 |
 | GET | `/overview` | viewer | 概览：KPI、程序、实例、机器、观众（实时推送：WebSocket `/api/v1/events`） |
@@ -39,8 +39,10 @@ curl -H "Authorization: Bearer $TOKEN" http://192.168.1.10:88/api/v1/overview
 | GET | `/sessions/live` | viewer | 在线观众（含 QoS） |
 | POST | `/sessions/:id/kick` | operator | 踢出观众 |
 | GET | `/sessions/history?program=&from=&to=&ip=&limit=&offset=` | viewer | 会话历史 |
+| GET | `/sessions/export?program=&from=&to=&ip=` | viewer | 导出会话 CSV（UTF-8 BOM，Excel 可直接打开，最多 10 万条） |
 | GET | `/sessions/stats?days=7` | viewer | 按程序统计会话数与时长 |
 | GET/POST | `/share-links` | viewer / operator | 访问链接 `{programId,hours,maxUses,note}`，返回 `path` |
+| POST | `/share-links/:id/url` | operator | 重新获取已有链接的地址（令牌按原有效期重新签发） |
 | POST | `/share-links/:id/revoke` | operator | 作废 |
 | GET/POST/PUT/DELETE | `/users`、`/users/:id`、`/users/:id/logout` | admin | 用户管理 |
 | GET/POST/DELETE | `/api-tokens`、`/api-tokens/:id` | admin | API 令牌 |
@@ -48,7 +50,7 @@ curl -H "Authorization: Bearer $TOKEN" http://192.168.1.10:88/api/v1/overview
 | POST | `/alerts/test` | admin | 告警测试 |
 | GET | `/logs?level=&q=&after=&limit=` | admin | 运行日志 |
 | GET / POST | `/backup` / `/restore` | admin | 备份导出 / 恢复（原子） |
-| GET | `/audit?limit=&offset=` | admin | 审计日志 |
+| GET | `/audit?limit=&offset=&q=` | admin | 审计日志（q 按用户 / 操作 / 对象 / IP 搜索） |
 | GET | `/system` | viewer | 版本、端口、资源 |
 | GET | `/public/programs` | 公开（观众口可用） | 门户页程序列表 |
 | POST | `/tools/pathfinder`（兼容 `/api/pathfinder`） | viewer 或公开* | 寻路（企业版格式） |
