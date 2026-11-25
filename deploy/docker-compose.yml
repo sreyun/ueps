@@ -69,6 +69,9 @@ services:
     image: ${NGINX_IMAGE:-nginx:stable-alpine}
     network_mode: host
     restart: unless-stopped
+    # 证书可选：没有 certs/fullchain.pem、privkey.pem 时以仅 http 模式启动（http:// 正常访问），放入证书后 restart nginx 启用 https
+    entrypoint: ["/bin/sh", "/etc/nginx/ps/entrypoint.sh"]
+    command: ["nginx", "-g", "daemon off;"]
     depends_on:
       platform:
         condition: service_healthy
@@ -85,7 +88,8 @@ services:
       PS_INT_HTTP: ${INT_HTTP:-127.0.0.1:3480}
       PS_STATUS: ${STATUS_ADDR:-127.0.0.1:9180}
     volumes:
-      - ./nginx/nginx.conf.template:/etc/nginx/templates/nginx.conf.template:ro
+      - ./nginx/nginx.conf.template:/etc/nginx/ps/nginx.conf.template:ro
+      - ./nginx/entrypoint.sh:/etc/nginx/ps/entrypoint.sh:ro
       - ${CERT_DIR:-./certs}:/etc/nginx/certs:ro
       - ./acme:/var/www/acme:ro
     ulimits:

@@ -1,5 +1,9 @@
 # 更新记录
 
+## 未发布
+
+- docker-compose 部署的证书改为可选：没有 `certs/fullchain.pem`、`privkey.pem` 时 nginx 自动以仅 http 模式启动（对外端口与 80 端口提供 `http://` 网页与明文 TURN，画面正常），不再因缺少证书反复重启、导致观众端无法访问；放入证书后 `docker compose restart nginx` 即启用 https。
+
 ## 1.2.2
 
 - 修复 Windows 发布包在英文系统构建失败：包内快速上手文件改为 ASCII 文件名 `QUICKSTART.txt`（Windows tar 无法在非中文代码页下写入中文文件名，且解压可能乱码）。

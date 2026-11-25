@@ -2,6 +2,12 @@
 #  docker-compose 使用的 nginx 模板：官方 nginx 镜像启动时用环境变量渲染为 /etc/nginx/nginx.conf
 #  （NGINX_ENVSUBST_OUTPUT_DIR=/etc/nginx，NGINX_ENVSUBST_FILTER=^PS_，只替换 PS_ 开头的变量，nginx 自身的变量不受影响）
 #  端口/地址由 deploy/.env 决定，默认值与 nginx.conf 相同（443 / 8088 / 3478 …）。由 nginx.conf 生成，内容保持一致。
+#
+#  证书可选：启动时 entrypoint.sh 检查 /etc/nginx/certs/fullchain.pem 与 privkey.pem——
+#    有证书 → 完整模式：同一端口提供 https / wss、TURNS，以及明文 http / TURN
+#    无证书 → 仅 http 模式：删除下面 tls-begin…tls-end 之间需要证书的配置、启用以 notls 标记的行，
+#             对外端口与 80 端口都提供 http://（播放页、嵌入地址）与明文 TURN，nginx 正常启动。
+#    放入证书后 docker compose restart nginx 即切换为完整模式。
 # =============================================================================
 # =============================================================================
 #  ps-platform —— nginx 单端口对外（客户现场只需开放 nginx 这一个 TCP 端口，公网零 UDP 映射）
@@ -51,14 +57,20 @@ stream {
     #   4) 其它 TLS               → https / wss
     map "$ssl_preread_protocol|$ssl_preread_alpn_protocols|$ssl_preread_server_name" $ps_route {
         "~^\|"           ${PS_INT_TURN};
+        #@tls-begin
         "~\|turn\."      ${PS_INT_TURNS};
         "~^[^|]+\|\|"    ${PS_INT_TURNS};
         default          ${PS_INT_HTTPS};
+        #@tls-end
+        #@notls default          ${PS_INT_TURN};    # 仅 http 模式：全部交给 TURN（明文 http 由 TURN 转给 ${PS_INT_HTTP}）
     }
 
     server {
         listen ${PS_MUX_PORT} reuseport so_keepalive=60s:10s:3;
         listen [::]:${PS_MUX_PORT} reuseport so_keepalive=60s:10s:3;
+        # 仅 http 模式：80 端口也走多路复用（网页地址是 http://host/ 时，平台下发的 turn:host:80 同样可用）
+        #@notls listen ${PS_HTTP_PORT} reuseport so_keepalive=60s:10s:3;
+        #@notls listen [::]:${PS_HTTP_PORT} reuseport so_keepalive=60s:10s:3;
         ssl_preread on;
         preread_timeout 10s;
         proxy_pass $ps_route;
@@ -69,6 +81,7 @@ stream {
     }
 
     # ---- TURN over TLS --------------------------------------------------------
+    #@tls-begin
     server {
         listen ${PS_INT_TURNS} ssl proxy_protocol;
         set_real_ip_from 127.0.0.1;
@@ -83,6 +96,7 @@ stream {
         proxy_timeout 10m;
         proxy_buffer_size 64k;
     }
+    #@tls-end
 
     # ---- 明文 TURN over TCP ---------------------------------------------------
     server {
@@ -127,6 +141,8 @@ http {
     }
 
     # 80：证书签发 + 跳转 https（对外端口本身同时支持 http:// 与 https://，见下方"同端口明文 http"）
+    #     仅 http 模式（无证书）下没有这一段：80 端口改由 stream 多路复用监听，与对外端口一样提供网页 + TURN
+    #@tls-begin
     server {
         listen ${PS_HTTP_PORT} default_server;
         listen [::]:${PS_HTTP_PORT} default_server;
@@ -134,6 +150,7 @@ http {
         location /.well-known/acme-challenge/ { root /var/www/acme; }
         location / { return 301 https://$host:${PS_MUX_PORT}$request_uri; }
     }
+    #@tls-end
 
     # 本机状态口：健康检查 / 监控用。443 会把"不带 ALPN 的 TLS"当作 TURNS，
     # 很多探活工具（busybox wget、部分负载均衡）不发 ALPN，所以探活打这里，不要打 443。
@@ -145,6 +162,7 @@ http {
         location /               { return 404; }
     }
 
+    #@tls-begin
     server {
         listen ${PS_INT_HTTPS} ssl proxy_protocol default_server;
         http2 on;
@@ -186,6 +204,7 @@ http {
             proxy_buffering     off;
         }
     }
+    #@tls-end
 
     # ---- 同端口明文 http（http://IP:端口/video.html?urlPrefix=xx、嵌入 http 业务系统）--------------
     # 对外端口上的非 TLS 流量先交给内置 TURN；TURN 识别出是 HTTP 请求（不是 STUN）后，带 PROXY 头转到这里。
@@ -200,6 +219,7 @@ http {
 
         location ~ ^/(admin|metrics)(/|$)            { return 404; }
         location ~* \.(pem|key|sqlite3?|log|env)$    { return 403; }
+        location /.well-known/acme-challenge/        { root /var/www/acme; }   # 仅 http 模式下 80 端口的证书签发走这里
 
         location / {
             if ($ps_ws_forbidden) { return 403; }

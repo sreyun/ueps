@@ -100,6 +100,8 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=ps-platform" \
 
 自签名证书下浏览器需要先点"继续访问"；此时浏览器只会使用明文 `turn:`（同样可用），`turns:` 需要受信任证书。
 
+**证书是可选的**：`certs/` 中没有 `fullchain.pem`、`privkey.pem` 时，nginx 自动以**仅 http 模式**启动（日志 `ps-platform: 未找到 … 以仅 http 模式启动`），对外端口与 80 端口都可以 `http://` 访问播放页、嵌入地址，画面照常（明文 TURN）；只是 `https://` 暂不可用。放入证书后执行 `docker compose restart nginx` 即切换为完整模式（https / wss / turns，http:// 仍可用）。需要被 https 业务系统以 iframe 嵌入时必须配置证书（https 页面不能嵌入 http 内容）。
+
 ### 3.3 启动
 
 ```bash
@@ -419,6 +421,7 @@ NODE_TLS_REJECT_UNAUTHORIZED=0 node test/load/platform-load.js --admin http://12
 
 | 现象 | 可能原因 | 处理 |
 |---|---|---|
+| nginx 不断重启（Restarting），日志 `cannot load certificate "/etc/nginx/certs/fullchain.pem"` | 1.2.2 及更早版本的部署文件要求必须有证书 | 更新部署文件（`git pull` 或覆盖 `deploy/`）后 `docker compose up -d`：没有证书时自动以仅 http 模式运行（见 3.2）；或按 3.2 生成自签名证书后 `docker compose restart nginx` |
 | 播放页一直"排队中" | 没有可用实例：Agent 离线 / 程序未配置可执行文件 / 达到最大实例数 / 显存不足 | 管理端「概览」与「程序」的错误提示；「运行日志」搜索 `没有可用的机器` |
 | 实例反复"启动失败" | 路径错误、不在 `--allow-exe` 目录、UE 未连上平台 | 日志 `启动失败：…`；检查 UE 能否访问 `ws://网关:88`（防火墙放行 88），`engineAllow` 是否包含渲染机网段 |
 | 黑屏，状态显示连接中 | ICE 不通：TURN 未运行、`relayIp` 不是 UE 可达的内网 IP、`allowedPeers` 不含 UE 网段 | `/healthz` 中 turn=up；日志 `relay <IP>`；渲染机 ping 网关 IP；放行网关 UDP 中继端口段（内网） |
