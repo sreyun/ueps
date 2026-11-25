@@ -262,8 +262,9 @@ class AgentPackages {
 				yield b;
 			}
 		};
+		const out = fs.createWriteStream(tmp, { mode: 0o755 });
 		try {
-			await pipeline(source, check, fs.createWriteStream(tmp, { mode: 0o755 }));
+			await pipeline(source, check, out);
 			if (size < this.minSize) throw err(400, `文件过小（${size} 字节），不是完整的 ${t.kind}`);
 			if (total && size !== total) throw err(400, `文件不完整：收到 ${size} 字节，应为 ${total} 字节`);
 			if (t.validate) t.validate(tmp);
@@ -273,6 +274,8 @@ class AgentPackages {
 				throw err(409, `无法替换现有安装包（${e.code || e.message}），可能正被下载，请稍后重试`);
 			}
 		} catch (e) {
+			// 第一块数据就被拒绝时，写入流可能还在异步打开文件：等它关闭后再删除，否则打开完成后会留下空的临时文件
+			if (!out.closed) await Promise.race([once(out, "close").catch(() => {}), new Promise((r) => setTimeout(r, 3000))]);
 			fs.rmSync(tmp, { force: true });
 			if (e.status) throw e;
 			throw err(400, e.code === "ERR_STREAM_PREMATURE_CLOSE" || e.code === "ECONNRESET" ? "传输中断，请重试" : e.message);
