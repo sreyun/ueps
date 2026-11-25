@@ -3,6 +3,7 @@
  * REST API（/api/v1）。默认需要登录（会话 Cookie 或 Bearer API 令牌）；opts.role 指定最低角色；写操作统一记审计。
  *   opts.public     无需登录          opts.playerSafe  观众口也可访问
  *   opts.tool       工具接口（设置 publicTools 后免登录）  opts.noToken  禁止 API 令牌调用（账户安全相关）
+ *   opts.rawBody    不解析 JSON，处理函数自行读取请求体（上传）
  */
 const { sendJson } = require("./http.js");
 const { hashPassword, verifyPasswordAsync, checkPasswordPolicy, signJwt, hasRole } = require("./auth.js");
@@ -12,7 +13,7 @@ const { newId } = require("./util.js");
 const { PROGRAM_ID_RE } = require("./store.js");
 
 function registerApi(router, ctx) {
-	const { store, scheduler, agents, signaling, metrics, settings, secrets, config, limiter, version, alerts, log } = ctx;
+	const { store, scheduler, agents, signaling, metrics, settings, secrets, config, limiter, version, alerts, log, packages } = ctx;
 	const audit = (req, action, target, detail) => store.audit({ username: req.user?.username || "", ip: req.clientIp, action, target, detail });
 	const httpErr = (status, message) => Object.assign(new Error(message), { status });
 	const ttlSec = () => Math.round((config.security.sessionTtlHours || 8) * 3600);
@@ -243,21 +244,95 @@ function registerApi(router, ctx) {
 		},
 		{ role: "admin" }
 	);
+	/** 渲染机访问平台管理口的地址：取管理员当前访问管理端所用的地址（渲染机与其同在内网） */
+	const adminOrigin = (req) => {
+		const host = req.headers.host || `127.0.0.1:${config.http.port}`;
+		const tls = !!config.http.tls?.admin;
+		return { host, http: `${tls ? "https" : "http"}://${host}`, ws: `${tls ? "wss" : "ws"}://${host}` };
+	};
+	const downloadUrls = (req) => {
+		const o = adminOrigin(req);
+		return { windows: `${o.http}/download/agent/windows`, windowsExe: `${o.http}/download/agent/windows-exe`, linux: `${o.http}/download/agent/linux` };
+	};
 	router.get(
 		"/api/v1/agent-install",
 		async (req, res) => {
-			const host = req.headers.host || `127.0.0.1:${config.http.port}`;
+			const o = adminOrigin(req);
 			const isAdmin = hasRole(req.user.role, "admin") && !req.user.token;
-			const scheme = config.http.tls?.admin ? "wss" : "ws";
 			const tok = isAdmin ? secrets.agentToken : "<令牌（管理员可见）>";
+			const dl = downloadUrls(req);
+			const args = `--agent --url ${o.ws}/agent --token ${tok} --id render-01`;
 			sendJson(res, 200, {
-				url: `${scheme}://${host}/agent`,
+				url: `${o.ws}/agent`,
+				address: o.host,
 				token: isAdmin ? secrets.agentToken : null,
-				windows: `ps-platform.exe --agent --url ${scheme}://${host}/agent --token ${tok} --id render-01 --allow-exe "D:\\UEProject\\"`,
-				linux: `./ps-platform --agent --url ${scheme}://${host}/agent --token ${tok} --id render-01 --allow-exe /opt/ue/`,
+				downloads: dl,
+				// 运行命令（在程序所在目录执行）。Windows 路径不要以 \ 结尾再加引号：\" 会被当成转义的引号
+				windows: `.\\ps-platform.exe ${args} --allow-exe D:\\UEProject`,
+				linux: `./ps-platform ${args} --allow-exe /opt/ue`,
+				// 下载命令（PowerShell / Linux shell）：关闭进度条可让 Windows PowerShell 5.1 的下载快数十倍
+				windowsDownload: `$ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -UseBasicParsing -Uri ${dl.windowsExe} -OutFile ps-platform.exe`,
+				linuxDownload: `curl -fL -o ps-platform ${dl.linux} && chmod +x ps-platform`,
+				// 批量部署：用安装链接下载的安装程序静默安装（已包含平台地址与令牌）
+				windowsSilent: `Start-Process -Wait .\\ps-platform-agent-setup.exe -ArgumentList '/S','/id=render-01','/allow-exe=D:\\UEProject'`,
 			});
 		},
 		{ role: "operator" }
+	);
+	// Windows 安装链接：24 小时内在渲染机浏览器中打开即可下载已包含平台地址与接入令牌的安装程序
+	router.post(
+		"/api/v1/agent-setup-link",
+		async (req, res) => {
+			const o = adminOrigin(req);
+			const ttl = 24 * 3600;
+			const k = signJwt({ typ: "agent-setup", ws: `${o.ws}/agent`, http: o.http, by: req.user.username }, secrets.jwt, ttl);
+			audit(req, "agent.setup_link");
+			sendJson(res, 200, { url: `${o.http}/download/agent/windows-setup?k=${k}`, expiresAt: Date.now() + ttl * 1000, available: !!packages.resolve("windows") });
+		},
+		{ role: "admin", noToken: true }
+	);
+
+	/* ------------------------------------------------------- Agent 安装包 */
+	router.get(
+		"/api/v1/agent-packages",
+		async (req, res) => sendJson(res, 200, { ...packages.status(), downloads: downloadUrls(req) }),
+		{ role: "operator" }
+	);
+	router.put(
+		"/api/v1/agent-packages/:target",
+		async (req, res, { params }) => {
+			packages.target(params.target);
+			const total = Number(req.headers["content-length"]) || 0;
+			try {
+				// 不随出错销毁请求流：保证能把错误原因返回给浏览器
+				const r = await packages.save(params.target, req.iterator({ destroyOnReturn: false }), { total, origin: "upload", by: req.user.username });
+				audit(req, "agent_package.upload", params.target, { size: r.size, sha256: r.sha256 });
+				sendJson(res, 200, packages.status().targets[params.target]);
+			} catch (e) {
+				res.setHeader("Connection", "close"); // 剩余的上传数据不再读取
+				throw e;
+			}
+		},
+		{ role: "admin", rawBody: true }
+	);
+	router.post(
+		"/api/v1/agent-packages/:target/fetch",
+		async (req, res, { params }) => {
+			const job = packages.startFetch(params.target, req.user.username);
+			audit(req, "agent_package.fetch", params.target, { url: job.url });
+			sendJson(res, 202, packages.status().targets[params.target]);
+		},
+		{ role: "admin" }
+	);
+	router.del(
+		"/api/v1/agent-packages/:target",
+		async (req, res, { params }) => {
+			if (!packages.remove(params.target)) throw httpErr(404, "没有已上传的安装包");
+			audit(req, "agent_package.delete", params.target);
+			if (params.target === "windows") packages.prepare().catch(() => {}); // Windows 打包运行时改回由平台自身在后台生成
+			sendJson(res, 200, packages.status().targets[params.target]);
+		},
+		{ role: "admin" }
 	);
 	router.post(
 		"/api/v1/agent-token/rotate",

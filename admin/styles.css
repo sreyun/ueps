@@ -278,3 +278,13 @@ ol.steps { padding-left: 20px; } ol.steps li { margin-bottom: 12px; }
 	.modal-bg { padding: 0; place-items: end center; }
 	.modal { border-radius: 14px 14px 0 0; max-height: 94vh; }
 }
+
+/* 接入渲染机：安装包状态 */
+.tab-body { padding-top: 12px; }
+.pkg { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 10px 0; background: rgba(255,255,255,.02); }
+.pkg-h { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 4px; }
+.pkg-p { margin-top: 6px; }
+.row-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; align-items: center; }
+button.danger-text { color: var(--bad); }
+.modal-b h4 { margin: 14px 0 6px; font-size: 13px; }
+.modal-b h4:first-child { margin-top: 0; }

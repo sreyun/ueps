@@ -1,6 +1,8 @@
 # 发布构建：推送 v* 标签时自动测试，并分别在 Windows / Linux 上打包可执行程序，上传到该标签的 GitHub Release。
 #   Windows → ps-platform-<版本>-windows-x64.zip（内含 ps-platform.exe）
+#             ps-platform-agent-setup-<版本>.exe（渲染机图形安装程序；平台「接入渲染机」一键获取的也是它）
 #   Linux   → ps-platform-<版本>-linux-x64.tar.gz（内含 ps-platform，glibc ≥ 2.28）
+#             ps-platform-agent-<版本>-linux-x64（单独的可执行文件，供平台一键获取 Linux Agent）
 # 也可在 Actions 页面手动运行（填写已存在的标签），用于给已有标签补发构建产物。
 name: Release · 可执行程序（Windows / Linux）
 
@@ -9,7 +11,7 @@ on:
     tags: ["v*"]
     # 修改构建脚本 / 本工作流时在 main 上只做测试与构建验证（不发布）
     branches: [main]
-    paths: ["build/**", ".github/workflows/**", "package.json", "package-lock.json", "server.js"]
+    paths: ["build/**", "agent-setup/**", ".github/workflows/**", "package.json", "package-lock.json", "server.js"]
   workflow_dispatch:
     inputs:
       tag:
@@ -63,9 +65,13 @@ jobs:
       matrix:
         include:
           - os: windows-latest
-            pattern: "dist/*-windows-x64.zip"
+            pattern: |
+              dist/*-windows-x64.zip
+              dist/ps-platform-agent-setup-*.exe
           - os: ubuntu-22.04
-            pattern: "dist/*-linux-x64.tar.gz"
+            pattern: |
+              dist/*-linux-x64.tar.gz
+              dist/ps-platform-agent-*-linux-x64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -116,6 +122,20 @@ jobs:
           fi
           # Windows 上直接结束进程（Git Bash 的 kill 对原生进程不可靠）；不再删除数据目录（进程退出前文件仍被占用）
           if [ "$RUNNER_OS" = "Windows" ]; then taskkill //F //T //IM ps-platform.exe > /dev/null 2>&1 || true; else kill %1 2>/dev/null || true; fi
+          # Windows：Agent 安装程序静默安装（不注册自动运行）到临时目录，释放出的 Agent 必须与发布包中的程序完全一致
+          if [ $ok = 1 ] && [ "$RUNNER_OS" = "Windows" ]; then
+            setup=$(ls "$GITHUB_WORKSPACE"/dist/ps-platform-agent-setup-*.exe)
+            inst=$(mktemp -d)
+            # MSYS_NO_PATHCONV：防止 Git Bash 把 /S 这类参数改写成路径
+            MSYS_NO_PATHCONV=1 "$setup" /S /noregister "/dir=$(cygpath -w "$inst/agent")" /url=127.0.0.1:18950 /token=ci-smoke /id=ci-smoke || ok=0
+            if cmp -s "$inst/agent/ps-platform.exe" ps-platform.exe && [ -f "$inst/agent/ps-agent.exe" ] && grep -q '"id":"ci-smoke"' "$inst/agent/data/agent.json"; then
+              echo "installer smoke passed"
+            else
+              ok=0
+              cat "$TEMP/ps-platform-agent-setup.log" 2>/dev/null || true
+              echo "::error title=smoke::Agent 安装程序静默安装失败或释放的 Agent 与发布包不一致"
+            fi
+          fi
           if [ $ok != 1 ]; then
             cat run.log
             tail -n 20 run.log | sed 's/%/%25/g' | while IFS= read -r l; do [ -n "$l" ] && echo "::error title=smoke::$l"; done
@@ -154,8 +174,11 @@ jobs:
             echo "|---|---|---|"
             echo "| Windows x64 | \`ps-platform-$ver-windows-x64.zip\` | \`ps-platform.exe\` |"
             echo "| Linux x64（glibc ≥ 2.28） | \`ps-platform-$ver-linux-x64.tar.gz\` | \`ps-platform\` |"
+            echo "| 渲染机 · Windows 10/11 图形安装程序 | \`ps-platform-agent-setup-$ver.exe\` | 双击按「下一步」安装 Agent |"
+            echo "| 渲染机 · Linux Agent | \`ps-platform-agent-$ver-linux-x64\` | \`./ps-platform-agent-… --agent …\` |"
             echo ""
             echo "解压后按包内QUICKSTART.txt（快速上手）或 docs/INSTALL.md 运行，无需安装 Node.js；docker-compose 部署见 deploy/。"
+            echo "渲染机一般不必单独下载：在管理端「机器 / GPU → 接入渲染机」复制安装链接，在渲染机浏览器中打开即可（Docker 部署的平台首次需点「从发布页获取」）。"
             echo ""
             cat notes.md
           } > release-notes.md

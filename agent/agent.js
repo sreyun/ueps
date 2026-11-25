@@ -3,8 +3,9 @@
  * ps-agent：渲染节点代理。负责在本机拉起/停止 UE 进程，并上报 CPU / 内存 / GPU / 进程状态。
  *
  * 独立运行（每台渲染机一个）：
- *   node agent/agent.js --url ws://<平台内网IP>:88/agent --token <agentToken> [--id render-01] [--allow-exe "D:\UE\"]
- *   ps-platform.exe --agent --url ws://... --token ...
+ *   Windows：管理端「接入渲染机」下载图形安装程序（ps-platform-agent-setup.exe），按向导安装即可（见 agent-setup/）
+ *   node agent/agent.js --url ws://<平台内网IP>:88/agent --token <agentToken> [--id render-01] [--allow-exe D:\UE]
+ *   ps-platform.exe --agent --url ws://... --token ...      或      ps-platform.exe --agent --config agent.json
  * 也可被平台以"内置本机 Agent"的方式在进程内使用（createAgent）。
  *
  * 安全：以参数数组 spawn（不经 shell，杜绝命令注入）；--allow-exe 限定可执行文件前缀；只连接内网平台地址。
@@ -302,12 +303,29 @@ function parseArgs(argv) {
 		else if (a === "--allow-exe") o.allowExe.push(argv[++i]);
 		else if (a === "--insecure") o.insecure = true;
 		else if (a === "--state") o.state = argv[++i];
+		else if (a === "--config") o.config = argv[++i];
+	}
+	// --config agent.json：Windows 安装程序写入的配置（令牌不出现在命令行 / 进程列表中）；命令行参数优先
+	if (o.config) {
+		let c;
+		try {
+			c = JSON.parse(fs.readFileSync(o.config, "utf8").replace(/^﻿/, ""));
+		} catch (e) {
+			throw new Error(`无法读取 Agent 配置文件 ${o.config}：${e.message}`);
+		}
+		o.url = o.url || c.url;
+		o.token = o.token || c.token;
+		o.id = o.id || c.id;
+		if (!o.allowExe.length && Array.isArray(c.allowExe)) o.allowExe.push(...c.allowExe);
+		o.state = o.state || c.state;
+		if (c.insecure) o.insecure = true;
 	}
 	o.url = o.url || process.env.PS_AGENT_URL;
 	o.token = o.token || process.env.PS_AGENT_TOKEN || "";
 	o.id = o.id || process.env.PS_AGENT_ID || os.hostname().toLowerCase().replace(/[^a-z0-9_-]/g, "-");
 	if (process.env.PS_AGENT_ALLOW_EXE) o.allowExe.push(...process.env.PS_AGENT_ALLOW_EXE.split(","));
-	o.allowExe = o.allowExe.map((s) => String(s || "").trim()).filter(Boolean);
+	// Windows 上 "D:\UE\" 会被解析成 D:\UE"（\" 是转义的引号）：去掉误带的引号，避免白名单永远不匹配
+	o.allowExe = o.allowExe.map((s) => String(s || "").trim().replace(/^"+|"+$/g, "")).filter(Boolean);
 	// 进程表文件：Agent 异常重启后据此接管仍在运行的 UE（放在临时目录：重启电脑后自然失效）
 	o.state = o.state || process.env.PS_AGENT_STATE || path.join(os.tmpdir(), `ps-agent-${o.id}.json`);
 	return o;
@@ -315,9 +333,15 @@ function parseArgs(argv) {
 
 function main(argv = process.argv.slice(2)) {
 	const WebSocket = require("ws");
-	const o = parseArgs(argv);
+	let o;
+	try {
+		o = parseArgs(argv);
+	} catch (e) {
+		console.error(`[agent] ${e.message}`);
+		process.exit(2);
+	}
 	if (!o.url) {
-		console.error("用法：agent --url ws://<平台内网IP>:88/agent --token <agentToken> [--id 机器名] [--allow-exe 路径前缀]");
+		console.error("用法：agent --url ws://<平台内网IP>:88/agent --token <agentToken> [--id 机器名] [--allow-exe 路径前缀]  或  agent --config agent.json");
 		process.exit(2);
 	}
 	let ws = null;
@@ -360,4 +384,4 @@ function main(argv = process.argv.slice(2)) {
 
 if (require.main === module) main();
 
-module.exports = { createAgent, queryGpus, main, VERSION, pidAlive, pidMatches };
+module.exports = { createAgent, queryGpus, main, parseArgs, VERSION, pidAlive, pidMatches };

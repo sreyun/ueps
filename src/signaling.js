@@ -542,4 +542,4 @@ function truncateReason(r) {
 	return s;
 }
 
-module.exports = { Signaling, safeSend };
+module.exports = { Signaling, safeSend, tokenEqual };

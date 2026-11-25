@@ -1,6 +1,6 @@
 # ps-platform 安装部署与运维手册
 
-> 适用版本：ps-platform 1.2.2　|　运行环境：Node.js ≥ 22.13（或直接使用打包好的 `ps-platform.exe`，无需安装 Node.js）
+> 适用版本：ps-platform 1.3.0　|　运行环境：Node.js ≥ 22.13（或直接使用打包好的 `ps-platform.exe`，无需安装 Node.js）
 
 目录
 
@@ -151,7 +151,7 @@ cd deploy && docker compose up -d --build
 
 ```bash
 # deploy/.env
-PS_IMAGE=swr.cn-east-3.myhuaweicloud.com/sreyun/ps-platform:1.2.2
+PS_IMAGE=swr.cn-east-3.myhuaweicloud.com/sreyun/ps-platform:1.3.0
 
 docker compose pull platform           # 拉取平台镜像（nginx 镜像同样从 NGINX_IMAGE 拉取）
 docker compose up -d --no-build
@@ -159,8 +159,8 @@ docker compose up -d --no-build
 
 | 镜像标签 | 含义 |
 |---|---|
-| `1.2.2` | 固定版本（**生产环境推荐**，升级时显式修改） |
-| `1.2` / `1` | 该次版本 / 主版本的最新发布 |
+| `1.3.0` | 固定版本（**生产环境推荐**，升级时显式修改） |
+| `1.3` / `1` | 该次版本 / 主版本的最新发布 |
 | `latest` | 最新正式发布 |
 | `sha-xxxxxxx` | 对应某次提交，排查问题时使用 |
 
@@ -178,7 +178,7 @@ docker compose up -d --no-build
 发布包内含：可执行文件（无需安装 Node.js）、`admin/`、`public/`、`config.example.json`、`nginx/`、`docs/`、`QUICKSTART.txt`（快速上手）。整个目录拷贝到目标机器即可。
 
 - 获取：从发布页（GitHub Releases）下载，或自行打包。
-- 自行打包：`npm install && npm run build:exe`（需 Node.js ≥ 25.5）。**在哪个系统打包就生成哪个系统的程序**：Windows 上得到 `.exe`，Linux 上得到无扩展名的可执行文件（Linux 请用 glibc 版 Node，例如 `docker run --rm -v $PWD:/src -w /src node:26-bookworm-slim sh -c "npm ci && npm run build:exe"`）。产物在 `dist/`。
+- 自行打包：`npm install && npm run build:exe`（需 Node.js ≥ 25.5）。**在哪个系统打包就生成哪个系统的程序**：Windows 上得到 `.exe`，Linux 上得到无扩展名的可执行文件（Linux 请用 glibc 版 Node，例如 `docker run --rm -v $PWD:/src -w /src node:26-bookworm-slim sh -c "npm ci && npm run build:exe"`）。产物在 `dist/`；Windows 上打包会同时编译渲染机安装程序 `ps-platform-agent-setup-<版本>.exe`（使用系统自带的 .NET Framework 4.x 编译器，源码在 `agent-setup/`）。
 - 源码运行：`npm install --omit=dev && node server.js`（Node.js ≥ 22.13）。
 
 ### 4.2 配置与启动
@@ -247,27 +247,79 @@ Windows 版 nginx 单 worker 并发约 1000 连接；观众较多时建议用 Li
 
 ## 5. 渲染机接入（Agent）
 
-在管理端「机器 / GPU → 接入渲染机」复制命令（含令牌，仅管理员可见），在渲染机上执行：
+每台渲染机运行一个 Agent（单机部署时平台已内置"本机"Agent，跳过本节）。Agent 与平台是同一个程序（以 `--agent` 运行），负责上报 CPU、内存、NVIDIA GPU（nvidia-smi）与进程，并按平台调度启动 / 停止 UE。
+
+### 5.1 Windows 10 / 11：图形安装（推荐）
+
+1. 管理端「渲染机 / GPU → 接入渲染机 → Windows（图形安装）」点 **复制安装链接**（仅管理员可见，24 小时内有效），在渲染机的浏览器中打开，下载 `ps-platform-agent-setup.exe`。也可以点「直接下载」后用 U 盘 / 共享文件夹拷贝过去。
+2. 在渲染机上双击运行（需要管理员权限），按向导点「下一步」：
+   - **连接平台**：平台地址与接入令牌已包含在安装程序中，向导自动检测连接；
+   - **本机设置**：机器名称（默认计算机名）、UE 程序所在文件夹（安全白名单，可添加多个）；
+   - **安装选项**：安装位置（默认 `C:\Program Files\ps-platform-agent`）与运行方式（见下表）。
+3. 安装完成后本机自动出现在「渲染机 / GPU」列表中。
+
+| 运行方式 | 说明 |
+|---|---|
+| 开机自动运行（Windows 服务，**默认**） | 无需登录 Windows，开机即接入平台，适合无人值守的渲染机。平台启动 UE 时总会加 `-RenderOffScreen`（无窗口渲染），服务方式下也能出图 |
+| 登录 Windows 后自动运行（计划任务） | 在当前用户的桌面会话中运行。个别显卡驱动 / UE 插件在服务方式下无法出图时使用；电脑重启后需登录 Windows（无人值守可用 `netplwiz` 设置自动登录） |
+
+- **修改设置**（机器名称、UE 目录、运行方式、平台地址）：再次运行安装程序，或在 Windows「设置 → 应用」中点「修改」。
+- **升级**：从平台重新下载安装程序运行即可，沿用原有设置；正在运行的 UE 不受影响，新 Agent 启动后自动接管。
+- **卸载**：Windows「设置 → 应用 → ps-platform 渲染节点 Agent → 卸载」。会停止 Agent、移除自动运行，并结束由 Agent 启动且仍在运行的 UE。
+- 安装位置中的文件：`ps-platform.exe`（Agent）、`ps-agent.exe`（守护进程：Agent 退出后自动重启）、`data\agent.json`（配置，含令牌，只有 SYSTEM / 管理员可读）、`data\logs\agent-日期.log`（日志，保留 14 天）。
+- 首次运行若出现「Windows 已保护你的电脑」，点「更多信息 → 仍要运行」（安装程序未做代码签名）。
+- 轮换接入令牌后，各渲染机重新下载安装程序运行一次即可（或修改 `data\agent.json` 中的 `token` 后重启服务 `ps-platform-agent`）。
+
+**批量部署（静默安装）**：用安装链接下载的安装程序（已含平台地址与令牌），在 PowerShell 中以管理员身份执行：
 
 ```powershell
-ps-platform.exe --agent --url ws://192.168.1.10:88/agent --token <令牌> --id render-01 --allow-exe "D:\UEProjects\"
+Start-Process -Wait .\ps-platform-agent-setup.exe -ArgumentList '/S','/id=render-01','/allow-exe=D:\UEProject'
 ```
 
+| 参数 | 说明 |
+|---|---|
+| `/S` | 静默安装，结果写入 `%TEMP%\ps-platform-agent-setup.log` |
+| `/id=` | 机器名称（默认计算机名） |
+| `/allow-exe=` | UE 程序目录，多个用 `;` 分隔；路径含空格时把整个参数加双引号：`'"/allow-exe=D:\UE Project"'` |
+| `/mode=` | `service`（默认）或 `logon` |
+| `/dir=` | 安装位置 |
+| `/url=` `/token=` | 不使用安装链接下载的安装程序（例如发布页下载的）时指定平台地址与令牌 |
+
+卸载：`Start-Process -Wait "C:\Program Files\ps-platform-agent\ps-agent.exe" -ArgumentList '/uninstall','/S'`。
+
+**安装程序从哪里来**：平台以 `ps-platform.exe` 运行时，启动后自动用自身生成（约 10 秒）；Docker / Linux 部署的平台需要获取一次——在「接入渲染机」中点 **从发布页获取**（下载 GitHub Releases 中同版本的 `ps-platform-agent-setup-<版本>.exe`，地址可用 `downloads.releaseBaseUrl` 改为内网镜像），或在能上网的电脑下载后点 **上传**。文件保存在 `data/downloads/`，平台升级后建议重新获取。
+
+### 5.2 Linux 渲染机
+
+「接入渲染机 → Linux」复制命令执行（先在该页获取一次 Linux Agent，方法同上，发布页文件为 `ps-platform-agent-<版本>-linux-x64`）：
+
 ```bash
-./ps-platform --agent --url ws://192.168.1.10:88/agent --token <令牌> --id render-01 --allow-exe /opt/ue/
-# 或用源码：node agent/agent.js --url ... （Node.js ≥ 22.13）
+curl -fL -o ps-platform http://192.168.1.10:88/download/agent/linux && chmod +x ps-platform
+./ps-platform --agent --url ws://192.168.1.10:88/agent --token <令牌> --id render-01 --allow-exe /opt/ue
 ```
+
+开机自启用 systemd（同 4.3，`ExecStart` 改为上面的 `--agent ...` 命令）。
+
+### 5.3 命令行参数（Windows / Linux 通用）
+
+```powershell
+.\ps-platform.exe --agent --url ws://192.168.1.10:88/agent --token <令牌> --id render-01 --allow-exe D:\UEProject
+# 或：.\ps-platform.exe --agent --config agent.json      源码：node agent/agent.js --url ...（Node.js ≥ 22.13）
+```
+
+Windows 的 Agent 程序本身可从 `http://<平台>:88/download/agent/windows-exe` 下载（「接入渲染机 → 命令行 / 批量部署」有现成命令）。
 
 | 参数 | 说明 |
 |---|---|
 | `--url` | 平台管理口地址（内网）。也可用环境变量 `PS_AGENT_URL` |
 | `--token` | Agent 令牌（`PS_AGENT_TOKEN`）。轮换后所有 Agent 需用新令牌重启 |
 | `--id` | 机器 ID（默认主机名），在管理端显示，也用于程序的"指定机器 / 各机器路径" |
-| `--allow-exe` | **强烈建议**。只允许启动该目录下的程序（按目录边界匹配，解析符号链接），可重复 |
+| `--allow-exe` | **强烈建议**。只允许启动该目录下的程序（按目录边界匹配，解析符号链接），可重复。Windows 路径不要写成 `"D:\UE\"`（`\"` 会被当成转义的引号） |
+| `--config` | JSON 配置文件 `{url, token, id, allowExe:[], state, insecure}`（安装程序使用，令牌不出现在命令行中）；命令行参数优先 |
 | `--state` | 进程表文件（默认系统临时目录）。Agent 或平台异常重启后据此接管仍在运行的 UE |
 | `--insecure` | wss 自签名证书时跳过校验 |
 
-建议用 NSSM 注册为服务（同 4.3，参数写在 `AppParameters`）。Agent 自动上报 CPU、内存、NVIDIA GPU（nvidia-smi）与进程；无 NVIDIA 显卡时可在机器「设置」中手动定义 GPU 与显存，平台按程序的"估算显存"放置。
+无 NVIDIA 显卡时可在机器「设置」中手动定义 GPU 与显存，平台按程序的"估算显存"放置。
 
 UE 由平台按程序配置拉起，平台自动追加：`-PixelStreamingURL=ws://<网关>:88/ue/<程序>/<实例>`、`-graphicsadapter`、`-RenderOffScreen`、`-Unattended`、分辨率/帧率/码率、`-AudioMixer`（可关）。程序"启动参数"里写的同名参数优先。
 
@@ -301,6 +353,7 @@ UE 由平台按程序配置拉起，平台自动追加：`-PixelStreamingURL=ws:
 | `turn.builtin.allowedPeers` | 私网段 | 只允许中继到这些地址（防止被当作开放代理） |
 | `turn.builtin.workers` | auto | TURN worker 进程数（min(4, CPU 核数)） |
 | `turn.builtin.httpFallback` | null | 同端口明文 http：设为 nginx 内部 http 入口 `127.0.0.1:3480` 后，对外端口同时支持 `http://`（docker-compose 默认开启） |
+| `downloads.releaseBaseUrl` | GitHub Releases（`…/releases/download/v{version}`） | 「接入渲染机」一键获取 Agent 安装包的地址，`{version}` 替换为平台版本；内网可改为自建镜像（目录中放同名文件），空字符串 = 不提供一键获取。经代理访问外网时设置环境变量 `HTTPS_PROXY` 并加 `NODE_USE_ENV_PROXY=1` |
 | `history.retentionDays` | 90 | 会话/审计保留天数 |
 | `log.level` / `log.retentionDays` | info / 14 | 日志级别、文件保留天数 |
 
@@ -313,6 +366,7 @@ UE 由平台按程序配置拉起，平台自动追加：`-PixelStreamingURL=ws:
 | `PS_ADMIN_ALLOW` `PS_ENGINE_ALLOW` `PS_TRUST_PROXY` `PS_LAN_NETWORKS` | 逗号分隔网段 |
 | `PS_LOCAL_AGENT` `PS_LOCAL_AGENT_ALLOW_EXE` | 本机 Agent |
 | `PS_TLS_CERT` `PS_TLS_KEY` `PS_TLS_ADMIN` | 内置 TLS |
+| `PS_RELEASE_BASE_URL` | `downloads.releaseBaseUrl` |
 | `PS_ADMIN_PASSWORD` | 首次启动的 admin 口令 |
 | `PS_PUBLIC_BASE_URL` | 首次启动写入的「对外访问地址」，例如 `https://ue.example.com:8443`（之后以管理端为准） |
 | `PS_JWT_SECRET` `PS_AGENT_TOKEN` `TURN_SECRET` | 固定密钥（默认随机生成存数据库） |

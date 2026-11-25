@@ -7,7 +7,9 @@
  *
  * 在哪个系统上打包就生成哪个系统的程序：
  *   Windows → dist/ps-platform-<版本>-windows-x64/ps-platform.exe   + dist/ps-platform-<版本>-windows-x64.zip
+ *             + dist/ps-platform-agent-setup-<版本>.exe（渲染机图形安装程序，需系统自带的 .NET Framework 4.x csc 编译）
  *   Linux   → dist/ps-platform-<版本>-linux-x64/ps-platform        + dist/ps-platform-<版本>-linux-x64.tar.gz
+ *             + dist/ps-platform-agent-<版本>-linux-x64（单独的可执行文件，供平台一键获取 Linux Agent）
  *   （Linux 请用 glibc 版 Node 打包，例如 node:26-bookworm-slim 镜像，产物可在主流发行版运行；不要用 Alpine/musl 版）
  *
  * 包内容：可执行文件（一个文件三种角色：平台 / --agent 渲染机代理 / --turn 中继）、admin/、public/、
@@ -17,6 +19,7 @@
  */
 const fs = require("fs");
 const path = require("path");
+const zlib = require("zlib");
 const { execFileSync } = require("child_process");
 
 const ROOT = path.join(__dirname, "..");
@@ -77,6 +80,48 @@ fs.rmSync(bundle, { force: true });
 if (!isWin) fs.chmodSync(output, 0o755);
 console.log("executable ->", path.relative(ROOT, output));
 
+// 2b) Agent 安装程序与单独的 Agent 程序（供平台「接入渲染机」一键获取、发布页下载）
+//   Windows：编译图形安装向导（agent-setup/，系统自带 .NET Framework 的 csc，C# 5），
+//            发布包内只放向导本身（平台以 exe 运行时用它 + 自身生成安装程序），完整安装程序单独输出到 dist/
+//   Linux：  单独输出可执行文件 dist/ps-platform-agent-<版本>-linux-x64
+const extras = [];
+if (isWin) {
+	const csc = path.join(process.env.SystemRoot || "C:\\Windows", "Microsoft.NET", "Framework64", "v4.0.30319", "csc.exe");
+	if (!fs.existsSync(csc)) {
+		console.error(`缺少 ${csc}：编译 Agent 安装程序需要 .NET Framework 4.x（Windows 10/11 自带）`);
+		process.exit(1);
+	}
+	const tmpDir = path.join(DIST, "agent-setup-build");
+	fs.rmSync(tmpDir, { recursive: true, force: true });
+	fs.mkdirSync(tmpDir, { recursive: true });
+	const numeric = `${pkg.version.split("-")[0]}.0`;
+	fs.writeFileSync(path.join(tmpDir, "BuildInfo.cs"), `static class BuildInfo { public const string Version = "${pkg.version}"; public const string NumericVersion = "${numeric}"; }\n`);
+	const stubDir = path.join(OUT, "agent-setup");
+	fs.mkdirSync(stubDir, { recursive: true });
+	const stub = path.join(stubDir, "ps-agent-setup-stub.exe");
+	const refs = ["System.dll", "System.Core.dll", "System.Drawing.dll", "System.Windows.Forms.dll", "System.ServiceProcess.dll", "System.Web.Extensions.dll"].map((r) => `/r:${r}`);
+	execFileSync(csc, ["/nologo", "/codepage:65001", "/target:winexe", "/platform:x64", "/optimize+", `/out:${stub}`, `/win32manifest:${path.join(ROOT, "agent-setup", "app.manifest")}`, ...refs, path.join(ROOT, "agent-setup", "AgentSetup.cs"), path.join(tmpDir, "BuildInfo.cs")], { stdio: "inherit" });
+	fs.rmSync(tmpDir, { recursive: true, force: true });
+	// 完整安装程序 = 向导 + [8 字节原始大小][gzip(ps-platform.exe)] + [8 字节段长度][PSAGENT1]
+	const exeBuf = fs.readFileSync(output);
+	const gz = zlib.gzipSync(exeBuf, { level: 9 });
+	const size = Buffer.alloc(8);
+	size.writeBigUInt64LE(BigInt(exeBuf.length));
+	const tail = Buffer.alloc(16);
+	tail.writeBigUInt64LE(BigInt(8 + gz.length), 0);
+	tail.write("PSAGENT1", 8, "ascii");
+	const setup = path.join(DIST, `ps-platform-agent-setup-${pkg.version}.exe`);
+	fs.writeFileSync(setup, Buffer.concat([fs.readFileSync(stub), size, gz, tail]));
+	extras.push(setup);
+	console.log("installer  ->", path.relative(ROOT, setup), `(${(fs.statSync(setup).size / 1048576).toFixed(1)} MB)`);
+} else if (osName === "linux") {
+	const bare = path.join(DIST, `ps-platform-agent-${pkg.version}-linux-${process.arch}`); // 不能与发布包目录 ps-platform-<版本>-linux-x64 同名
+	fs.copyFileSync(output, bare);
+	fs.chmodSync(bare, 0o755);
+	extras.push(bare);
+	console.log("agent bin  ->", path.relative(ROOT, bare));
+}
+
 // 3) 运行时资源
 for (const dir of ["admin", "public"]) fs.cpSync(path.join(ROOT, dir), path.join(OUT, dir), { recursive: true });
 fs.copyFileSync(path.join(ROOT, "config.example.json"), path.join(OUT, "config.example.json"));
@@ -91,7 +136,8 @@ const guide = [
 	"1. 复制配置：" + (isWin ? "copy config.example.json config.json" : "cp config.example.json config.json") + "，按 docs/INSTALL.md 第 6 节修改",
 	`2. 启动平台：${run}`,
 	"   管理端：http://<本机IP>:88/admin/ ，初始口令见 data" + (isWin ? "\\" : "/") + "initial-admin.txt（或启动前设置环境变量 PS_ADMIN_PASSWORD）",
-	`3. 渲染机代理：${run} --agent --url ws://<平台内网IP>:88/agent --token <令牌> --id <机器名> --allow-exe <UE 所在目录>`,
+	"3. 渲染机：Windows 在管理端「渲染机 / GPU → 接入渲染机」复制安装链接，在渲染机浏览器中打开下载安装程序，按「下一步」完成；",
+	`   命令行方式：${run} --agent --url ws://<平台内网IP>:88/agent --token <令牌> --id <机器名> --allow-exe <UE 所在目录>`,
 	`4. 忘记口令：${run} --reset-password admin`,
 	"",
 	isWin ? "注册为 Windows 服务（开机自启）：见 docs/INSTALL.md 4.3（NSSM）" : "注册为 systemd 服务（开机自启）：见 docs/INSTALL.md 4.3",

@@ -4,6 +4,7 @@
  */
 const fs = require("fs");
 const path = require("path");
+const zlib = require("zlib");
 
 const MIME = {
 	".html": "text/html; charset=utf-8",
@@ -155,4 +156,29 @@ function serveFile(req, res, root, relPath, { cache = "no-cache" } = {}) {
 	});
 }
 
-module.exports = { Router, sendJson, sendText, readJson, securityHeaders, serveFile, resolveSafe, MIME };
+/**
+ * 以附件形式下载文件（安装包等）：浏览器保存为 name，命令行工具（curl / Invoke-WebRequest）同样适用。
+ *   append  在文件末尾追加的内容（安装程序附带的平台配置）
+ *   gzip    { start, end }：只发送文件中这一段 gzip 数据解压后的内容（size 为解压后大小）
+ */
+function serveDownload(req, res, file, name, { append = null, gzip = null, size = 0 } = {}) {
+	fs.stat(file, (err, st) => {
+		if (err || !st.isFile()) return sendText(res, 404, "Not Found");
+		res.writeHead(200, {
+			"Content-Type": "application/octet-stream",
+			"Content-Length": gzip ? size : st.size + (append ? append.length : 0),
+			"Content-Disposition": `attachment; filename="${String(name).replace(/[^\w.-]/g, "_")}"`,
+			"Last-Modified": st.mtime.toUTCString(),
+			"Cache-Control": "no-cache",
+		});
+		if (req.method === "HEAD") return res.end();
+		const src = fs.createReadStream(file, gzip ? { start: gzip.start, end: gzip.end } : {});
+		const body = gzip ? src.pipe(zlib.createGunzip()) : src;
+		src.on("error", () => res.destroy());
+		body.on("error", () => res.destroy());
+		body.pipe(res, { end: !append });
+		if (append) body.on("end", () => res.end(append));
+	});
+}
+
+module.exports = { Router, sendJson, sendText, readJson, securityHeaders, serveFile, serveDownload, resolveSafe, MIME };

@@ -16,9 +16,9 @@ const { Store } = require("./store.js");
 const { Settings, loadSecrets } = require("./settings.js");
 const { AgentHub } = require("./agents.js");
 const { Scheduler } = require("./scheduler.js");
-const { Signaling, safeSend } = require("./signaling.js");
+const { Signaling, safeSend, tokenEqual } = require("./signaling.js");
 const { Metrics } = require("./metrics.js");
-const { Router, sendJson, sendText, readJson, securityHeaders, serveFile, resolveSafe } = require("./http.js");
+const { Router, sendJson, sendText, readJson, securityHeaders, serveFile, serveDownload, resolveSafe } = require("./http.js");
 const { registerApi } = require("./api.js");
 const { verifyJwt, parseCookies, hasRole, hashPassword, LoginLimiter } = require("./auth.js");
 const { RateLimiter, parseApiToken, safeEqualHex } = require("./security.js");
@@ -26,8 +26,9 @@ const { Alerts } = require("./alerts.js");
 const { createLogger } = require("./logger.js");
 const { firstLanIPv4, ipInList, randomSecret, throttle } = require("./util.js");
 const { createAgent } = require("../agent/agent.js");
+const { AgentPackages, configSection } = require("./downloads.js");
 
-const VERSION = "1.2.2";
+const VERSION = "1.3.0";
 
 function createApp({ config, assetsDir, log, selfCommand, env = process.env }) {
 	log = log || createLogger({ level: config.log.level, dir: config.log.file ? path.join(config.dataDir, "logs") : null, retentionDays: config.log.retentionDays });
@@ -44,6 +45,15 @@ function createApp({ config, assetsDir, log, selfCommand, env = process.env }) {
 	const scheduler = new Scheduler({ store, agents, log, defaultUeHost: ueHost, ueProto: proto });
 	const signaling = new Signaling({ config, store, scheduler, agents, settings: () => settings.get(), secrets, log, limiter: rateLimiter });
 	const limiter = new LoginLimiter();
+	// Agent 安装包（渲染机从「接入渲染机」中的地址直接下载）；平台以打包程序运行时可直接提供自身
+	const packages = new AgentPackages({
+		dir: path.join(config.dataDir, "downloads"),
+		version: VERSION,
+		selfExe: selfCommand && selfCommand.length === 1 ? selfCommand[0] : null,
+		setupStub: path.join(assetsDir, "agent-setup", "ps-agent-setup-stub.exe"),
+		releaseBaseUrl: config.downloads?.releaseBaseUrl || "",
+		log,
+	});
 	const loopDelay = monitorEventLoopDelay({ resolution: 20 });
 	loopDelay.enable();
 	let turnProc = null;
@@ -199,7 +209,7 @@ function createApp({ config, assetsDir, log, selfCommand, env = process.env }) {
 		};
 	}
 
-	const ctx = { store, scheduler, agents, signaling, metrics, settings, secrets, config, limiter, alerts, log, overview, systemInfo, version: VERSION };
+	const ctx = { store, scheduler, agents, signaling, metrics, settings, secrets, config, limiter, alerts, log, overview, systemInfo, packages, version: VERSION };
 	const router = new Router();
 	registerApi(router, ctx);
 
@@ -258,6 +268,37 @@ function createApp({ config, assetsDir, log, selfCommand, env = process.env }) {
 		return true;
 	}
 
+	/* ---------------------------------------------------- Agent 安装包 */
+	const NOT_READY = "该安装包尚未提供：请管理员在管理端「渲染机 / GPU → 接入渲染机」中上传或从发布页获取。\n";
+	function agentDownload(req, res, p, url) {
+		if (p === "/agent/check") {
+			// 安装向导「检测连接」：令牌正确时返回平台版本（限速，防止猜测令牌）
+			if (!rateLimiter.allow(`agentcheck:${req.clientIp}`, 2, 10)) return sendJson(res, 429, { error: "请求过于频繁，请稍后再试" });
+			if (!tokenEqual(String(req.headers["x-agent-token"] || ""), secrets.agentToken)) return sendJson(res, 401, { error: "接入令牌不正确" });
+			return sendJson(res, 200, { ok: true, version: VERSION });
+		}
+		const name = p.slice("/download/agent/".length).replace(/\/+$/, "");
+		if (name === "windows-setup") {
+			// 管理端生成的安装链接（24 小时有效）：安装程序末尾附加平台地址与当前接入令牌，渲染机上双击按「下一步」即可
+			const claims = verifyJwt(url.searchParams.get("k"), secrets.jwt);
+			if (!claims || claims.typ !== "agent-setup" || !claims.ws) return sendText(res, 403, "安装链接无效或已过期（24 小时内有效）：请在管理端「接入渲染机」中重新复制。\n");
+			const f = packages.resolve("windows");
+			if (!f) return sendText(res, 404, NOT_READY);
+			const append = configSection({ v: 1, url: claims.ws, token: secrets.agentToken, platform: claims.http, version: VERSION });
+			if (req.method === "GET") store.audit({ username: claims.by || "", ip: req.clientIp, action: "agent.setup_download", target: "windows" });
+			return serveDownload(req, res, f.path, "ps-platform-agent-setup.exe", { append });
+		}
+		if (name === "windows-exe") {
+			// 命令行方式使用的 Agent 程序本身：平台自身或从安装程序中解压
+			const f = packages.resolveWindowsExe();
+			if (!f) return sendText(res, 404, NOT_READY);
+			return serveDownload(req, res, f.path, "ps-platform.exe", { gzip: f.gzip, size: f.size });
+		}
+		const f = packages.resolve(name); // windows：未附带配置的安装程序（向导中手动填写地址与令牌）；linux：Agent 程序
+		if (!f) return sendText(res, 404, NOT_READY);
+		return serveDownload(req, res, f.path, f.file);
+	}
+
 	async function onRequest(req, res, isPublic) {
 		let url;
 		try {
@@ -280,6 +321,11 @@ function createApp({ config, assetsDir, log, selfCommand, env = process.env }) {
 				return sendText(res, 200, metrics.prometheus({ turnEnabled: config.turn.builtin.enable }), "text/plain; version=0.0.4");
 			}
 			if (req.method !== "GET" && req.method !== "HEAD") return sendText(res, 405, "Method Not Allowed");
+			// Agent 安装包下载与令牌校验：只在管理口，且来自管理网段或 UE/Agent 网段（渲染机）
+			if (!isPublic && (p.startsWith("/download/agent/") || p === "/agent/check")) {
+				if (!adminAllowed(req, false) && !signaling.engineAllowed(req, false)) return sendText(res, 403, "Forbidden");
+				return agentDownload(req, res, p, url);
+			}
 			if (!isPublic && (p === "/admin" || p.startsWith("/admin/"))) {
 				if (!adminAllowed(req, false)) return sendText(res, 403, "Forbidden");
 				const rel = p === "/admin" || p === "/admin/" ? "/index.html" : p.slice("/admin".length);
@@ -329,7 +375,7 @@ function createApp({ config, assetsDir, log, selfCommand, env = process.env }) {
 		if (req.method !== "GET" && !viaToken && !toolPublic && req.headers["x-ps-request"] !== "1") return sendJson(res, 403, { error: "缺少 X-PS-Request 请求头" });
 		let body = {};
 		try {
-			if (req.method !== "GET") body = await readJson(req, route.opts.bodyLimit || 1 << 20);
+			if (req.method !== "GET" && !route.opts.rawBody) body = await readJson(req, route.opts.bodyLimit || 1 << 20); // rawBody：处理函数自行读取请求体（上传）
 			await route.handler(req, res, { params, query: Object.fromEntries(url.searchParams), body });
 		} catch (e) {
 			if (!e.status) log.error("[api]", e);
@@ -409,7 +455,7 @@ function createApp({ config, assetsDir, log, selfCommand, env = process.env }) {
 		srv.on("tlsClientError", () => {});
 		// keepAliveTimeout 需大于 nginx upstream keepalive_timeout（默认 60s），否则 nginx 复用到刚被关闭的连接会偶发 502
 		srv.headersTimeout = 20000;
-		srv.requestTimeout = 60000;
+		srv.requestTimeout = isPublic ? 60000 : 30 * 60000; // 管理口允许较长的上传（Agent 安装包约 100MB）；请求头仍须在 20 秒内到达
 		srv.keepAliveTimeout = 65000;
 		servers.push(srv);
 		return new Promise((resolve, reject) => {
@@ -440,6 +486,7 @@ function createApp({ config, assetsDir, log, selfCommand, env = process.env }) {
 			const scheme = adminTls ? "https" : "http";
 			const pscheme = config.http.tls ? "https" : "http";
 			log.info(`[app] ps-platform ${VERSION} 已启动：管理口 ${scheme}://${config.http.host}:${this.ports.admin}/admin/  观众口 ${this.ports.public ? `${pscheme}://${config.http.publicHost}:${this.ports.public}` : "未启用"}  UE 地址 ${proto}://${ueHost}`);
+			packages.prepare().catch(() => {}); // Windows 打包运行时在后台生成 Agent 安装程序
 			return this;
 		},
 		async stop() {

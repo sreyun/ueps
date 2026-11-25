@@ -30,9 +30,11 @@ copy config.example.json config.json   # 修改 localAgent.allowExe 为 UE 所�
 .\ps-platform.exe                       # 管理端 http://<本机IP>:88/admin/ ，初始口令见 data\initial-admin.txt
 ```
 
-渲染机接入：管理端「渲染机 / GPU → 接入渲染机」复制命令，在渲染机执行（Windows）`ps-platform.exe --agent --url ws://<网关>:88/agent --token <令牌> --allow-exe "D:\UE\"` 或（Linux）`./ps-platform --agent --url ws://<网关>:88/agent --token <令牌> --allow-exe /opt/ue/`。
+渲染机接入：
+- **Windows 10 / 11**：管理端「渲染机 / GPU → 接入渲染机」复制安装链接，在渲染机浏览器中打开，下载的安装程序已包含平台地址与令牌，双击按「下一步」即可（默认作为 Windows 服务开机自动运行，可在「设置 → 应用」中修改或卸载）。批量部署可静默安装，见 docs/INSTALL.md 第 5 节。
+- **Linux**：同一页面复制命令执行：`curl -fL -o ps-platform http://<网关>:88/download/agent/linux && chmod +x ps-platform && ./ps-platform --agent --url ws://<网关>:88/agent --token <令牌> --allow-exe /opt/ue`。
 
-发布包：Windows `ps-platform-<版本>-windows-x64.zip`（内含 `ps-platform.exe`）、Linux `ps-platform-<版本>-linux-x64.tar.gz`（内含 `ps-platform`），见 GitHub Releases 或 `npm run build:exe` 自行打包。
+发布包：Windows `ps-platform-<版本>-windows-x64.zip`（内含 `ps-platform.exe`）、Linux `ps-platform-<版本>-linux-x64.tar.gz`（内含 `ps-platform`），渲染机安装程序 `ps-platform-agent-setup-<版本>.exe`，见 GitHub Releases 或 `npm run build:exe` 自行打包（Windows 上打包会同时编译安装程序）。
 
 ## 文档
 

@@ -55,6 +55,10 @@ const DEFAULTS = {
 	},
 	history: { retentionDays: 90 },
 	log: { level: "info", retentionDays: 14, file: true },
+	downloads: {
+		// 「接入渲染机」中一键获取 Agent 安装包的发布页地址（{version} = 平台版本）。内网可改为自建镜像，空字符串 = 不提供一键获取
+		releaseBaseUrl: "https://github.com/sreyun/ueps/releases/download/v{version}",
+	},
 };
 
 function merge(base, over) {
@@ -85,6 +89,7 @@ function applyEnv(c, env) {
 	if (env.PS_LOG_LEVEL) c.log.level = env.PS_LOG_LEVEL;
 	if (env.PS_TLS_CERT && env.PS_TLS_KEY) c.http.tls = { cert: env.PS_TLS_CERT, key: env.PS_TLS_KEY, admin: bool(env.PS_TLS_ADMIN || "") };
 	if (env.PS_SITE_DIR) c.site.dir = env.PS_SITE_DIR;
+	if (env.PS_RELEASE_BASE_URL !== undefined) c.downloads.releaseBaseUrl = env.PS_RELEASE_BASE_URL;
 	if (env.TURN_FORCE_RELAY) c.turn.forceRelay = env.TURN_FORCE_RELAY === "external" ? "external" : bool(env.TURN_FORCE_RELAY);
 	if (env.DC_TURN_URLS || env.UE_TURN_URLS) c.turn.servers = [];
 	if (env.DC_TURN_URLS) c.turn.servers.push({ id: "dc", name: "数据中心 STUN/TURN", urls: list(env.DC_TURN_URLS), ...(env.DC_TURN_SECRET ? { secret: env.DC_TURN_SECRET } : {}), scope: env.DC_TURN_SCOPE || "all", audience: env.DC_TURN_AUDIENCE || "all", enable: true });
@@ -114,6 +119,7 @@ function validate(c) {
 	if (!(c.security.sessionTtlHours > 0)) errs.push("security.sessionTtlHours 必须大于 0");
 	if (!["debug", "info", "warn", "error"].includes(c.log.level)) errs.push("log.level 取值：debug / info / warn / error");
 	if (!Array.isArray(c.localAgent.allowExe)) errs.push("localAgent.allowExe 必须是数组");
+	if (c.downloads.releaseBaseUrl && !/^https?:\/\/[^\s]+$/i.test(c.downloads.releaseBaseUrl)) errs.push("downloads.releaseBaseUrl 必须以 http:// 或 https:// 开头（空字符串 = 不提供一键获取）");
 	if (![false, true, "external"].includes(c.turn.forceRelay)) errs.push('turn.forceRelay 取值：false / true / "external"');
 	if (!Array.isArray(c.turn.servers) || c.turn.servers.some((s) => ![].concat(s?.urls || []).length || [].concat(s.urls).some((u) => !/^(stun|turns?):/i.test(String(u))))) errs.push("turn.servers 必须是 [{ urls: [\"stun:/turn:/turns:...\"] }] 数组");
 	const b = c.turn.builtin;

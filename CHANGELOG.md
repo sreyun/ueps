@@ -1,6 +1,21 @@
 # 更新记录
 
-## 未发布
+## 1.3.0
+
+### 渲染机图形化安装（Windows 10 / 11）
+
+- 新增 Windows Agent 安装程序 `ps-platform-agent-setup-<版本>.exe`：管理端「接入渲染机」复制安装链接（24 小时有效），在渲染机浏览器中打开下载，安装程序已包含平台地址与接入令牌，双击按「下一步」完成——确认平台（自动检测连接与令牌）→ 机器名称与 UE 程序目录 → 安装位置与运行方式 → 安装并等待接入平台。不再需要手敲命令行、NSSM。
+  - 运行方式：开机自动运行的 Windows 服务（默认，无需登录）或登录 Windows 后运行（计划任务）；Agent 退出后由守护进程自动重启，日志保留 14 天。
+  - 出现在 Windows「设置 → 应用」中，可「修改」（重新打开向导调整设置）与卸载（停止 Agent、移除自动运行、结束其启动的 UE）；再次运行即原地升级，正在运行的 UE 不中断。
+  - 配置写入 `data\agent.json`（仅 SYSTEM / 管理员可读），令牌不出现在命令行与进程列表中；支持 `/S` 静默安装用于批量部署。
+  - 只依赖 Windows 自带的 .NET Framework 4.x，安装程序约 38MB（内置压缩的 Agent）。
+- 「接入渲染机」改为 Windows（图形安装）/ Linux / 命令行与批量部署三页；显示安装包状态（来源、版本、大小、SHA256），管理员可一键「从发布页获取」或上传，带进度与可读的失败原因。
+  - 平台以 `ps-platform.exe` 运行时自动用自身生成安装程序；Docker / Linux 部署的平台获取一次即可（`downloads.releaseBaseUrl` / `PS_RELEASE_BASE_URL` 可改为内网镜像）。
+  - 渲染机下载地址：`/download/agent/windows-setup?k=…`（附带配置的安装程序）、`windows`、`windows-exe`、`linux`，只在管理口、仅管理网段与 UE/Agent 网段可访问；安装向导检测连接用 `/agent/check`（限速）。
+- Agent 新增 `--config <json>`；`--allow-exe "D:\UE\"` 这类带转义引号的路径自动纠正（原先会导致白名单永远不匹配、UE 无法启动），接入命令中的示例路径同步修正。
+- 发布产物新增 `ps-platform-agent-setup-<版本>.exe` 与 `ps-platform-agent-<版本>-linux-x64`；Windows 冒烟测试增加安装程序静默安装校验；CI 增加安装程序编译与向导截图。
+
+### 部署
 
 - docker-compose 部署的证书改为可选：没有 `certs/fullchain.pem`、`privkey.pem` 时 nginx 自动以仅 http 模式启动（对外端口与 80 端口提供 `http://` 网页与明文 TURN，画面正常），不再因缺少证书反复重启、导致观众端无法访问；放入证书后 `docker compose restart nginx` 即启用 https。
 

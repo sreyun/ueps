@@ -34,7 +34,12 @@ curl -H "Authorization: Bearer $TOKEN" http://192.168.1.10:88/api/v1/overview
 | POST | `/instances/:id/stop` · `/instances/:id/drain` | operator | 停止 / 排空 |
 | GET | `/machines` | viewer | 机器与 GPU |
 | PUT/DELETE | `/machines/:id` | operator / admin | `{name,enabled,max_instances,tags,gpus_override}` / 删除离线机器 |
-| GET | `/agent-install` | operator | Agent 安装命令（令牌仅管理员可见） |
+| GET | `/agent-install` | operator | Agent 接入信息与命令（令牌仅管理员可见）：`downloads`、`windows` / `linux`（运行命令）、`windowsDownload` / `linuxDownload`（下载命令）、`windowsSilent`（静默安装） |
+| POST | `/agent-setup-link` | admin（不可用 API 令牌） | 生成 Windows 安装链接 `{url, expiresAt, available}`，24 小时有效；下载的安装程序附带平台地址与当前接入令牌 |
+| GET | `/agent-packages` | operator | Agent 安装包状态：`targets.windows`（图形安装程序）/ `targets.linux`（Agent 程序）的来源、版本、大小、SHA256、获取任务进度 |
+| PUT | `/agent-packages/:target` | admin | 上传安装包（请求体为文件原始内容，`Content-Type: application/octet-stream`，上限 512MB）；校验文件类型，Windows 必须是含 Agent 的安装程序 |
+| POST | `/agent-packages/:target/fetch` | admin | 后台从发布页获取（`downloads.releaseBaseUrl`），进度见 `/agent-packages` |
+| DELETE | `/agent-packages/:target` | admin | 删除上传 / 获取的安装包 |
 | POST | `/agent-token/rotate` | admin | 轮换 Agent 令牌 |
 | GET | `/sessions/live` | viewer | 在线观众（含 QoS） |
 | POST | `/sessions/:id/kick` | operator | 踢出观众 |
@@ -59,6 +64,16 @@ curl -H "Authorization: Bearer $TOKEN" http://192.168.1.10:88/api/v1/overview
 \* 「系统设置 → 安全 → 工具接口公开」开启后免登录，且观众口也可调用。
 
 其它：`GET /healthz`（健康检查）、`GET /metrics`（Prometheus，仅 `adminAllow` 网段）。
+
+渲染机使用（仅管理口，来自 `adminAllow` 或 `engineAllow` 网段，无需登录）：
+
+| 路径 | 说明 |
+|---|---|
+| `GET /download/agent/windows-setup?k=<安装链接令牌>` | Windows 图形安装程序，末尾附带平台地址与接入令牌（链接由 `/agent-setup-link` 生成） |
+| `GET /download/agent/windows` | Windows 图形安装程序（不含配置，向导中手动填写地址与令牌） |
+| `GET /download/agent/windows-exe` | Windows Agent 程序本身（命令行方式使用） |
+| `GET /download/agent/linux` | Linux Agent 程序 |
+| `GET /agent/check`（请求头 `X-Agent-Token`） | 安装向导检测连接：令牌正确返回 `{ok:true, version}`，否则 401（限速） |
 
 ## 3. 程序字段
 
