@@ -94,8 +94,14 @@ jobs:
           New-Item -ItemType Directory -Force out | Out-Null
           'static class BuildInfo { public const string Version = "0.0.0-ci"; public const string NumericVersion = "0.0.0.0"; }' | Set-Content -Encoding utf8 out/BuildInfo.cs
           $csc = Join-Path $env:SystemRoot "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-          & $csc /nologo /codepage:65001 /warnaserror+ /target:winexe /platform:x64 /optimize+ /out:out/ps-agent-setup-stub.exe /win32manifest:agent-setup/app.manifest /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.ServiceProcess.dll /r:System.Web.Extensions.dll agent-setup/AgentSetup.cs out/BuildInfo.cs
-          if ($LASTEXITCODE -ne 0) { Write-Output "::error file=agent-setup/AgentSetup.cs,title=安装程序编译失败::csc 退出码 $LASTEXITCODE"; exit 1 }
+          # /nowarn:1668：运行器的 LIB 环境变量含不存在的目录，csc 会警告（与代码无关）
+          $out = & $csc /nologo /codepage:65001 /warnaserror+ /nowarn:1668 /target:winexe /platform:x64 /optimize+ /out:out/ps-agent-setup-stub.exe /win32manifest:agent-setup/app.manifest /r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.ServiceProcess.dll /r:System.Web.Extensions.dll agent-setup/AgentSetup.cs out/BuildInfo.cs 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          $out
+          if ($code -ne 0) {
+            $out -split "`r?`n" | Where-Object { $_ -match "error|warning" } | Select-Object -First 10 | ForEach-Object { Write-Output ("::error title=安装程序编译失败::" + $_.Trim().Replace("%", "%25")) }
+            exit 1
+          }
           "stub: {0} bytes" -f (Get-Item out/ps-agent-setup-stub.exe).Length
 
       - name: 向导截图

@@ -119,8 +119,8 @@ test("平台：上传安装程序 → 安装链接下载附带配置 → 解压 
 		r = await raw(ctx.ADMIN, "PUT", "/api/v1/agent-packages/windows", { body: setup, headers: auth });
 		assert.strictEqual(r.status, 200, r.body.toString());
 		assert.strictEqual(JSON.parse(r.body).source, "upload");
-		// 上传需要管理员：未登录 401
-		r = await raw(ctx.ADMIN, "PUT", "/api/v1/agent-packages/windows", { body: setup, headers: { "X-PS-Request": "1" } });
+		// 上传需要管理员：未登录 401（请求体要小：服务器不读取就返回，大请求体可能在客户端写入时被重置连接）
+		r = await raw(ctx.ADMIN, "PUT", "/api/v1/agent-packages/windows", { body: Buffer.from("MZ"), headers: { "X-PS-Request": "1" } });
 		assert.strictEqual(r.status, 401);
 
 		const st = await ctx.api("GET", "/api/v1/agent-packages");

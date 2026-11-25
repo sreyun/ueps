@@ -55,8 +55,21 @@ jobs:
           done
           echo "版本号一致：$ver"
       - run: npm ci --no-audit --no-fund
-      # 测试含少量时序相关用例，CI 机器偶发抖动时重试一次
-      - run: npm test || npm test
+      # 测试含少量时序相关用例，CI 机器偶发抖动时重试一次；仍失败则把原因写成注解（运行页面直接可见）
+      - name: npm test
+        run: |
+          set +e
+          npm test > test.log 2>&1
+          status=$?
+          if [ $status -ne 0 ]; then
+            echo "第一次运行失败，重跑一次："
+            cat test.log
+            npm test > test.log 2>&1
+            status=$?
+          fi
+          cat test.log
+          [ $status -eq 0 ] || bash .github/scripts/annotate-test-log.sh test.log "npm test"
+          exit $status
 
   build:
     needs: test
