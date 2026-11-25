@@ -7,6 +7,9 @@ name: release
 on:
   push:
     tags: ["v*"]
+    # 修改构建脚本 / 本工作流时在 main 上只做测试与构建验证（不发布）
+    branches: [main]
+    paths: ["build/**", ".github/workflows/**", "package.json", "package-lock.json", "server.js"]
   workflow_dispatch:
     inputs:
       tag:
@@ -59,7 +62,17 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci --no-audit --no-fund
-      - run: npm run build:exe
+      - name: 构建可执行程序
+        shell: bash
+        run: |
+          node -v
+          if ! npm run build:exe > build.log 2>&1; then
+            cat build.log
+            # 把错误输出写成注解，便于在 Actions 页面直接看到原因
+            tail -n 25 build.log | sed 's/%/%25/g' | while IFS= read -r l; do [ -n "$l" ] && echo "::error title=build:exe::$l"; done
+            exit 1
+          fi
+          cat build.log
       - name: 冒烟测试（启动程序并检查健康接口）
         shell: bash
         run: |
@@ -83,6 +96,7 @@ jobs:
 
   release:
     needs: build
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -106,7 +120,7 @@ jobs:
             echo "| Windows x64 | \`ps-platform-$ver-windows-x64.zip\` | \`ps-platform.exe\` |"
             echo "| Linux x64（glibc ≥ 2.28） | \`ps-platform-$ver-linux-x64.tar.gz\` | \`ps-platform\` |"
             echo ""
-            echo "解压后按包内「运行说明.txt」或 docs/INSTALL.md 运行，无需安装 Node.js；docker-compose 部署见 deploy/。"
+            echo "解压后按包内QUICKSTART.txt（快速上手）或 docs/INSTALL.md 运行，无需安装 Node.js；docker-compose 部署见 deploy/。"
             echo ""
             cat notes.md
           } > release-notes.md

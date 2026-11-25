@@ -11,7 +11,7 @@
  *   （Linux 请用 glibc 版 Node 打包，例如 node:26-bookworm-slim 镜像，产物可在主流发行版运行；不要用 Alpine/musl 版）
  *
  * 包内容：可执行文件（一个文件三种角色：平台 / --agent 渲染机代理 / --turn 中继）、admin/、public/、
- *         config.example.json、nginx/、docs/、运行说明.txt。整个目录拷到目标机器即可运行，无需安装 Node.js。
+ *         config.example.json、nginx/、docs/、QUICKSTART.txt（快速上手，文件名用 ASCII，任何系统解压都不会乱码）。整个目录拷到目标机器即可运行，无需安装 Node.js。
  *
  * 要求：Node.js >= 25.5（--build-sea）；低版本自动退回 --experimental-sea-config + postject。
  */
@@ -98,7 +98,7 @@ const guide = [
 	"对外服务需配合 nginx（单端口多路复用）：nginx/nginx.conf，说明见 docs/INSTALL.md",
 	"",
 ].join(isWin ? "\r\n" : "\n");
-fs.writeFileSync(path.join(OUT, "运行说明.txt"), guide);
+fs.writeFileSync(path.join(OUT, "QUICKSTART.txt"), guide); // 文件名保持 ASCII：英文系统上 Windows tar 无法把中文文件名写入 zip，且解压可能乱码
 
 // 4) 发布压缩包（Windows 10+ 与 Linux 均自带 tar；Windows 的 tar 可直接生成 zip）
 const archiveName = isWin ? `${name}.zip` : `${name}.tar.gz`;

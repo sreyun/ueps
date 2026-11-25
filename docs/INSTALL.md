@@ -1,6 +1,6 @@
 # ps-platform 安装部署与运维手册
 
-> 适用版本：ps-platform 1.2.1　|　运行环境：Node.js ≥ 22.13（或直接使用打包好的 `ps-platform.exe`，无需安装 Node.js）
+> 适用版本：ps-platform 1.2.2　|　运行环境：Node.js ≥ 22.13（或直接使用打包好的 `ps-platform.exe`，无需安装 Node.js）
 
 目录
 
@@ -151,7 +151,7 @@ cd deploy && docker compose up -d --build
 | Windows x64（10 / Server 2016 及以上） | `ps-platform-<版本>-windows-x64.zip` | `ps-platform.exe` |
 | Linux x64（glibc ≥ 2.28：CentOS/RHEL 8+、Ubuntu 20.04+、Debian 10+、麒麟/统信等） | `ps-platform-<版本>-linux-x64.tar.gz` | `ps-platform`（无扩展名） |
 
-发布包内含：可执行文件（无需安装 Node.js）、`admin/`、`public/`、`config.example.json`、`nginx/`、`docs/`、`运行说明.txt`。整个目录拷贝到目标机器即可。
+发布包内含：可执行文件（无需安装 Node.js）、`admin/`、`public/`、`config.example.json`、`nginx/`、`docs/`、`QUICKSTART.txt`（快速上手）。整个目录拷贝到目标机器即可。
 
 - 获取：从发布页（GitHub Releases）下载，或自行打包。
 - 自行打包：`npm install && npm run build:exe`（需 Node.js ≥ 25.5）。**在哪个系统打包就生成哪个系统的程序**：Windows 上得到 `.exe`，Linux 上得到无扩展名的可执行文件（Linux 请用 glibc 版 Node，例如 `docker run --rm -v $PWD:/src -w /src node:26-bookworm-slim sh -c "npm ci && npm run build:exe"`）。产物在 `dist/`。
