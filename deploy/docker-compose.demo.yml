@@ -1,0 +1,39 @@
+# =============================================================================
+#  演示叠加文件：还没有 UE 时查看整条链路的效果
+#    docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d --build
+#  额外启动 demo-agent：一个 ps-platform Agent（渲染节点），平台按需让它启动"UE"——
+#  无头 Chromium（与 UE 同为 libwebrtc）推送 1280x720@30fps 测试画面。
+#  启动后在管理端创建程序（或执行 docs/INSTALL.md 中的演示程序命令）：
+#    可执行文件 /usr/local/bin/node   启动参数 /app/test/e2e/fake-ue-launcher.js
+#  接入真实 UE 后去掉本文件即可。
+# =============================================================================
+services:
+  platform:
+    environment:
+      # 演示 UE 与 TURN 同机，且无头浏览器的本机候选地址是 mDNS 名称：只给 UE 下发本机 TURN
+      UE_TURN_URLS: turn:127.0.0.1:${TURN_PORT:-3478}?transport=tcp
+
+  demo-agent:
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile
+      target: demo-agent
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:22-alpine}
+        APK_MIRROR: ${APK_MIRROR:-}
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
+    image: ps-platform-demo-agent:1.1
+    network_mode: host
+    restart: unless-stopped
+    init: true                           # Chromium 的辅助进程会成为孤儿，必须有 init 回收，否则僵尸进程不断累积
+    shm_size: 512m
+    environment:
+      PS_AGENT_URL: ws://127.0.0.1:${PS_PORT:-88}/agent
+      PS_AGENT_TOKEN: ${PS_AGENT_TOKEN:?演示需要在 .env 中设置 PS_AGENT_TOKEN（随机长字符串）}
+      PS_AGENT_ID: ${DEMO_AGENT_ID:-demo-render}
+    depends_on:
+      platform:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }

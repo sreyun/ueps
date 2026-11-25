@@ -1,0 +1,10 @@
+node_modules/
+data/
+dist/
+*.log
+deploy/.env
+deploy/certs/
+deploy/acme/
+deploy/data/
+.DS_Store
+Thumbs.db

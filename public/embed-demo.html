@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+		<title>全屏嵌入演示 · 云渲染</title>
+		<link rel="icon" href="/favicon.svg" />
+		<!--
+			模拟"业务系统全屏嵌入云渲染画面"。用法：
+			  /embed-demo.html?urlPrefix=<程序ID>        （也可用 ?program=）
+			  可选：&auto=0 不显示"点击进入全屏"提示；&token=... 透传访问链接令牌
+			嵌入的地址与企业版一致：/video.html?urlPrefix=<程序ID>，业务系统照抄下方"嵌入代码"即可。
+		-->
+		<style>
+			html, body { margin: 0; height: 100%; background: #000; overflow: hidden; font: 14px/1.5 system-ui, "Microsoft YaHei", sans-serif; color: #e8eaed; }
+			iframe { position: fixed; inset: 0; width: 100vw; height: 100vh; border: 0; display: block; }
+			#start { position: fixed; inset: 0; z-index: 5; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; cursor: pointer;
+				background: radial-gradient(circle at center, rgba(16,36,64,.55) 0%, rgba(0,0,0,.78) 70%); transition: opacity .35s; }
+			#start.hidden { opacity: 0; pointer-events: none; }
+			#start .icon { width: 84px; height: 84px; border-radius: 50%; border: 2px solid rgba(255,255,255,.85); display: grid; place-items: center; font-size: 34px; }
+			#start .title { font-size: 22px; font-weight: 600; }
+			#start .sub { opacity: .7; }
+			#bar { position: fixed; top: 0; left: 50%; transform: translate(-50%, -110%); z-index: 4; display: flex; gap: 8px; align-items: center; padding: 8px 12px;
+				background: rgba(12,18,28,.82); border: 1px solid rgba(255,255,255,.12); border-top: 0; border-radius: 0 0 10px 10px; transition: transform .25s; backdrop-filter: blur(6px); }
+			#bar.show { transform: translate(-50%, 0); }
+			#bar b { margin-right: 6px; font-weight: 600; }
+			#bar button { background: rgba(255,255,255,.08); color: #fff; border: 1px solid rgba(255,255,255,.2); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 13px; }
+			#bar button:hover { background: rgba(255,255,255,.18); }
+			#hot { position: fixed; top: 0; left: 0; right: 0; height: 8px; z-index: 3; }
+			#code { position: fixed; z-index: 6; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(720px, 92vw); padding: 18px; display: none;
+				background: #121a26; border: 1px solid rgba(255,255,255,.15); border-radius: 12px; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+			#code.show { display: block; }
+			#code pre { margin: 10px 0; padding: 12px; background: #0a0f17; border-radius: 8px; white-space: pre-wrap; word-break: break-all; font: 12px/1.6 ui-monospace, Consolas, monospace; color: #9fd3ff; }
+			#code .row { display: flex; gap: 8px; justify-content: flex-end; }
+			#code button { background: #2f6fed; color: #fff; border: 0; border-radius: 6px; padding: 6px 14px; cursor: pointer; }
+			#code button.ghost { background: transparent; border: 1px solid rgba(255,255,255,.25); }
+			#code p { margin: 4px 0; opacity: .75; font-size: 13px; }
+		</style>
+	</head>
+	<body>
+		<iframe id="player" allow="autoplay; fullscreen; clipboard-read; clipboard-write" title="云渲染画面"></iframe>
+		<div id="hot"></div>
+		<div id="bar">
+			<b id="name">全屏嵌入演示</b>
+			<button id="btnFull">进入全屏</button>
+			<button id="btnCode">嵌入代码</button>
+			<button id="btnOpen">新窗口打开</button>
+		</div>
+		<div id="start">
+			<div class="icon">⛶</div>
+			<div class="title">点击任意位置，全屏查看云渲染画面</div>
+			<div class="sub">按 Esc 退出全屏 · 鼠标移到屏幕顶部显示工具栏</div>
+		</div>
+		<div id="code">
+			<b>嵌入代码</b>
+			<p>复制到业务系统页面即可（地址格式与企业版一致；业务系统为 https 页面时需改用 https 地址并使用受信任证书）：</p>
+			<pre id="snippet"></pre>
+			<div class="row"><button class="ghost" id="btnClose">关闭</button><button id="btnCopy">复制</button></div>
+		</div>
+		<script>
+			const $ = (id) => document.getElementById(id);
+			const q = new URLSearchParams(location.search);
+			// 只允许嵌入本平台的播放页（程序 ID 白名单字符），不接受任意 URL，避免被用来框住第三方页面
+			const program = (q.get("urlPrefix") || q.get("program") || "").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 32);
+			const token = (q.get("token") || "").replace(/[^A-Za-z0-9._-]/g, "");
+			const path = `/video.html?urlPrefix=${encodeURIComponent(program)}` + (token ? `&token=${token}` : "");
+			const full = `${location.origin}${path}`;
+			$("player").src = path;
+			$("name").textContent = program ? `全屏嵌入演示 · ${program}` : "全屏嵌入演示（请在地址后加 ?urlPrefix=程序ID）";
+			$("snippet").textContent = `<iframe src="${full}"\n        allow="autoplay; fullscreen; clipboard-read; clipboard-write"\n        style="border:0;width:100%;height:100%"></iframe>`;
+
+			const enterFull = () => document.documentElement.requestFullscreen?.().catch(() => {});
+			const focusPlayer = () => setTimeout(() => $("player").focus(), 50); // 键盘操作直接发给画面
+			const start = () => {
+				$("start").classList.add("hidden");
+				enterFull();
+				focusPlayer();
+			};
+			if (q.get("auto") === "0") $("start").classList.add("hidden");
+			$("start").addEventListener("click", start);
+			$("btnFull").onclick = () => (document.fullscreenElement ? document.exitFullscreen() : enterFull(), focusPlayer());
+			document.addEventListener("fullscreenchange", () => ($("btnFull").textContent = document.fullscreenElement ? "退出全屏" : "进入全屏"));
+			$("btnOpen").onclick = () => window.open(full, "_blank", "noopener");
+			$("btnCode").onclick = () => $("code").classList.add("show");
+			$("btnClose").onclick = () => ($("code").classList.remove("show"), focusPlayer());
+			$("btnCopy").onclick = async () => {
+				try {
+					await navigator.clipboard.writeText($("snippet").textContent);
+					$("btnCopy").textContent = "已复制";
+				} catch {
+					getSelection().selectAllChildren($("snippet"));
+					$("btnCopy").textContent = "请按 Ctrl+C";
+				}
+				setTimeout(() => ($("btnCopy").textContent = "复制"), 1500);
+			};
+			// 工具栏：鼠标移到顶部边缘时出现，3 秒无操作自动隐藏
+			let hideTimer;
+			const showBar = () => {
+				$("bar").classList.add("show");
+				clearTimeout(hideTimer);
+				hideTimer = setTimeout(() => !$("bar").matches(":hover") && $("bar").classList.remove("show"), 3000);
+			};
+			$("hot").addEventListener("mouseenter", showBar);
+			$("bar").addEventListener("mouseleave", showBar);
+			showBar();
+		</script>
+	</body>
+</html>

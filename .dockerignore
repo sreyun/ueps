@@ -1,0 +1,12 @@
+.git
+node_modules
+data
+dist
+build
+test/*
+!test/e2e
+deploy/certs
+deploy/acme
+deploy/data
+deploy/.env
+*.log

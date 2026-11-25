@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+		<title>云渲染</title>
+		<link rel="icon" href="/favicon.svg" />
+		<style>
+			html, body { margin: 0; height: 100%; background: #000; color: #e8eaed; font: 14px/1.5 system-ui, "Microsoft YaHei", sans-serif; overflow: hidden; }
+			/* 按视频真实宽高比居中留黑边：元素尺寸 = 画面尺寸，键鼠坐标换算才准确（不能用 object-fit 拉伸/裁剪） */
+			:root { --ar: 1.7778; }
+			video { position: absolute; inset: 0; margin: auto; width: min(100vw, calc(100vh * var(--ar))); height: min(100vh, calc(100vw / var(--ar))); background: #000; }
+			#overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 14px; background: radial-gradient(circle at center, #1b2433 0%, #05070a 70%); transition: opacity .4s; z-index: 2; }
+			#overlay.hidden { opacity: 0; pointer-events: none; }
+			.spinner { width: 42px; height: 42px; border: 3px solid rgba(255,255,255,.15); border-top-color: #4f8cff; border-radius: 50%; animation: spin 1s linear infinite; }
+			@keyframes spin { to { transform: rotate(360deg); } }
+			#msg { font-size: 16px; text-align: center; max-width: 80vw; }
+			#sub { opacity: .6; font-size: 13px; }
+			#hud { position: fixed; right: 10px; bottom: 10px; z-index: 3; padding: 8px 10px; border-radius: 8px; background: rgba(0,0,0,.55); font: 12px/1.6 ui-monospace, Consolas, monospace; white-space: pre; pointer-events: none; }
+			#hud.hidden { display: none; }
+			#bar { position: fixed; left: 10px; bottom: 10px; z-index: 3; display: flex; gap: 6px; opacity: .35; transition: opacity .2s; }
+			#bar:hover { opacity: 1; }
+			#bar button { background: rgba(0,0,0,.6); color: #fff; border: 1px solid rgba(255,255,255,.25); border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; }
+			.good { color: #5fe08a; } .warn { color: #ffc35a; } .bad { color: #ff6b6b; }
+		</style>
+	</head>
+	<body>
+		<script src="/peer-stream.js"></script>
+		<video is="peer-stream"></video>
+		<div id="overlay"><div class="spinner"></div><div id="msg">正在连接…</div><div id="sub"></div></div>
+		<pre id="hud" class="hidden"></pre>
+		<div id="bar"><button id="btnFull">全屏</button><button id="btnHud">状态</button></div>
+		<script>
+			const $ = (id) => document.getElementById(id);
+			const params = new URLSearchParams(location.search);
+			const show = (msg, sub = "", spin = true) => {
+				$("overlay").classList.remove("hidden");
+				$("msg").textContent = msg;
+				$("sub").textContent = sub;
+				document.querySelector(".spinner").style.display = spin ? "" : "none";
+			};
+			if (params.get("stats") === "1") $("hud").classList.remove("hidden");
+			$("btnHud").onclick = () => $("hud").classList.toggle("hidden");
+			$("btnFull").onclick = () => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.());
+
+			// 服务端的文本提示（以 "! " 开头）：程序不存在、需要访问链接等
+			const origOnMsg = ps.onWebSocketMessage.bind(ps);
+			ps.onWebSocketMessage = (data) => {
+				if (typeof data === "string" && data.startsWith("! ")) {
+					show(data.slice(2), "如需帮助请联系管理员", false);
+					ps.fatal = true;
+				}
+				return origOnMsg(data);
+			};
+			ps.addEventListener("playing", () => $("overlay").classList.add("hidden"));
+			ps.addEventListener("playerconfig", (e) => {
+				if (e.detail.name) document.title = e.detail.name;
+				if (e.detail.inactiveReleaseSec) $("sub").textContent = `超过 ${Math.round(e.detail.inactiveReleaseSec / 60) || 1} 分钟无操作将自动断开`;
+			});
+			const fitAspect = () => ps.videoWidth && document.documentElement.style.setProperty("--ar", (ps.videoWidth / ps.videoHeight).toFixed(4));
+			ps.addEventListener("loadedmetadata", fitAspect);
+			ps.addEventListener("resize", fitAspect); // UE 切换分辨率时
+			ps.addEventListener("playerqueue", (e) => show("当前访问人数较多，正在排队", `前面还有 ${Math.max(0, e.detail.seq - 1)} 人`));
+			ps.addEventListener("ueDisConnected", () => show("渲染服务已切换，正在重新连接…"));
+			ps.addEventListener("webrtcfailed", () => show("网络连接失败，正在重试…", "若持续出现请检查网络或联系管理员"));
+			ps.addEventListener("playerdisconnected", () => !ps.fatal && show("连接已断开，正在重连…"));
+
+			let last = null;
+			setInterval(async () => {
+				if (!(ps.pc instanceof RTCPeerConnection) || ps.pc.connectionState !== "connected") return;
+				const stats = await ps.pc.getStats();
+				let v = null, bytes = 0;
+				stats.forEach((s) => {
+					if (s.type === "inbound-rtp" && (s.kind || s.mediaType) === "video") v = s;
+					if (s.type === "transport") bytes += s.bytesReceived || 0;
+				});
+				const t = await ps.getTransportInfo();
+				const now = performance.now();
+				const kbps = last ? Math.round(((bytes - last.b) * 8) / (now - last.t)) : 0;
+				last = { b: bytes, t: now };
+				const rtt = t?.rtt !== undefined ? Math.round(t.rtt * 1000) : null;
+				const cls = rtt === null ? "" : rtt < 60 ? "good" : rtt < 150 ? "warn" : "bad";
+				const link = t ? (t.localType === "relay" ? `TURN 中继(${t.relayProtocol || "udp"})` : t.localType === "host" ? "内网直连" : t.localType) : "-";
+				$("hud").innerHTML = [
+					`链路   ${link}`,
+					`延迟   <span class="${cls}">${rtt ?? "-"} ms</span>`,
+					`码率   ${(kbps / 1000).toFixed(2)} Mbps`,
+					`画面   ${v?.frameWidth || "-"}x${v?.frameHeight || "-"} @ ${v?.framesPerSecond ?? "-"} fps`,
+					`丢包   ${v?.packetsLost ?? 0}`,
+				].join("\n");
+			}, 1000);
+		</script>
+	</body>
+</html>

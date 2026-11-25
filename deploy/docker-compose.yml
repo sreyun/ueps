@@ -1,0 +1,99 @@
+# =============================================================================
+#  ps-platform 网关：nginx（唯一对外端口）+ ps-platform（信令 + 调度 + 管理端 + 内置 TURN/TCP 中继）
+#
+#  部署机：与 UE 渲染机同一内网的 Linux 主机（Docker Engine + compose v2）。
+#    cp .env.example .env        # 按注释填写 LAN_IP / UE_SUBNETS / 密钥
+#    mkdir -p certs && 放入 fullchain.pem / privkey.pem（自签名也可，见 docs/INSTALL.md）
+#    docker compose up -d --build
+#    docker compose ps
+#  管理端：http://<LAN_IP>:88/admin/（仅内网）   观众：https://<域名或IP:映射端口>/
+#  渲染机：运行 ps-platform Agent 连接 ws://<LAN_IP>:88/agent（命令在管理端「机器 / GPU → 接入渲染机」中复制）
+#
+#  使用 host 网络：内置 TURN 的中继 UDP 端口必须以本机内网地址（LAN_IP）直接收发 UE 的数据。
+#  （Docker Desktop 的 host 网络能力有限，Windows/macOS 请直接运行 ps-platform.exe）
+# =============================================================================
+name: ps-platform
+
+services:
+  platform:
+    build:
+      context: ..
+      dockerfile: deploy/docker/Dockerfile
+      target: platform
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:22-alpine}
+        NPM_REGISTRY: ${NPM_REGISTRY:-}
+    image: ps-platform:1.1
+    network_mode: host
+    restart: unless-stopped
+    init: true                           # tini 作为 1 号进程：转发信号、回收孤儿子进程
+    volumes:
+      - ${DATA_DIR:-./data}:/data
+    environment:
+      PS_PORT: ${PS_PORT:-88}
+      PS_HOST: 0.0.0.0
+      PS_PUBLIC_PORT: ${PS_PUBLIC_PORT:-8088}
+      PS_PUBLIC_HOST: 127.0.0.1
+      PS_UE_HOST: ${PS_UE_HOST:-auto}
+      PS_ADMIN_ALLOW: ${ADMIN_SUBNETS:-127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
+      PS_ENGINE_ALLOW: ${UE_SUBNETS:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16},127.0.0.0/8
+      PS_LAN_NETWORKS: ${LAN_NETWORKS:-}
+      # 信任其 X-Forwarded-For 的代理：本机 nginx + 前面的上游反向代理（路由器反代 / 云负载均衡 / CDN 回源地址）
+      PS_TRUST_PROXY: "127.0.0.1,::1,${UPSTREAM_PROXIES:-}"
+      PS_LOCAL_AGENT: "false"            # 容器里没有 UE；渲染机各自运行 Agent
+      PS_ADMIN_PASSWORD: ${PS_ADMIN_PASSWORD:-}   # 留空则随机生成，见 data/initial-admin.txt
+      PS_AGENT_TOKEN: ${PS_AGENT_TOKEN:-}         # 留空则随机生成（管理端可查看/轮换）
+      PS_JWT_SECRET: ${PS_JWT_SECRET:-}
+      TURN_BUILTIN: "true"
+      TURN_SECRET: ${TURN_SECRET:-}
+      TURN_LISTEN: 127.0.0.1:${TURN_PORT:-3478}
+      TURN_RELAY_IP: ${LAN_IP:?请在 .env 中设置 LAN_IP（本机内网 IP，UE 必须能访问）}
+      TURN_ALLOWED_PEERS: ${UE_SUBNETS:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
+      TURN_MIN_PORT: ${TURN_MIN_PORT:-49160}
+      TURN_MAX_PORT: ${TURN_MAX_PORT:-50159}
+      TURN_WORKERS: ${TURN_WORKERS:-auto}
+      TURN_FORCE_RELAY: ${TURN_FORCE_RELAY:-false}
+      # 同端口明文 http：TURN 把识别出的 HTTP 连接转给 nginx 的内部 http server（http://IP:端口/… 旧地址、嵌入 http 系统）
+      TURN_HTTP_FALLBACK: ${INT_HTTP:-127.0.0.1:3480}
+      DC_TURN_URLS: ${DC_TURN_URLS:-}
+      DC_TURN_SECRET: ${DC_TURN_SECRET:-}
+      UE_TURN_URLS: ${UE_TURN_URLS:-}
+    ulimits:
+      nofile: { soft: 65535, hard: 65535 }
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }
+
+  nginx:
+    image: ${NGINX_IMAGE:-nginx:stable-alpine}
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      platform:
+        condition: service_healthy
+    environment:
+      NGINX_ENVSUBST_OUTPUT_DIR: /etc/nginx
+      NGINX_ENVSUBST_FILTER: "^PS_"
+      PS_MUX_PORT: ${MUX_PORT:-443}
+      PS_HTTP_PORT: ${HTTP_PORT:-80}
+      PS_PUBLIC_UPSTREAM: 127.0.0.1:${PS_PUBLIC_PORT:-8088}
+      PS_TURN_UPSTREAM: 127.0.0.1:${TURN_PORT:-3478}
+      PS_INT_HTTPS: ${INT_HTTPS:-127.0.0.1:8443}
+      PS_INT_TURNS: ${INT_TURNS:-127.0.0.1:5349}
+      PS_INT_TURN: ${INT_TURN:-127.0.0.1:3479}
+      PS_INT_HTTP: ${INT_HTTP:-127.0.0.1:3480}
+      PS_STATUS: ${STATUS_ADDR:-127.0.0.1:9180}
+    volumes:
+      - ./nginx/nginx.conf.template:/etc/nginx/templates/nginx.conf.template:ro
+      - ${CERT_DIR:-./certs}:/etc/nginx/certs:ro
+      - ./acme:/var/www/acme:ro
+    ulimits:
+      nofile: { soft: 65535, hard: 65535 }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://${STATUS_ADDR:-127.0.0.1:9180}/healthz >/dev/null || exit 1"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "5" }

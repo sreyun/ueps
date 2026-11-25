@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+	<head>
+		<meta charset="utf-8" />
+		<title>fake UE (libwebrtc)</title>
+		<style>
+			body { background: #111; color: #ddd; font: 13px monospace; }
+			canvas { border: 1px solid #444; }
+		</style>
+	</head>
+	<body>
+		<!--
+			用浏览器模拟 UE 像素流插件（UE 内部同样是 libwebrtc）：
+			  - 以 UE 身份连接信令（不带子协议），处理 identify/config/playerConnected/answer/iceCandidate
+			  - 作为 offerer 推送一路 canvas 视频（30fps）+ 数据通道（与 UE5 像素流 1 一致）
+			  - 使用信令 config 下发的 iceServers（即 signal.json 中 scope=ue/all 的 TURN 临时凭据）
+			用法：http://<signal内网地址>:<PORT>/fake-ue.html  （?relay=1 强制 UE 侧只用 TURN）
+		-->
+		<canvas id="c" width="640" height="360"></canvas>
+		<pre id="log"></pre>
+		<script>
+			const params = new URLSearchParams(location.search);
+			const signalUrl = params.get("signal") || `ws://${location.host}/`;
+			const log = (...a) => {
+				const line = new Date().toISOString().slice(11, 23) + " " + a.map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(" ");
+				document.getElementById("log").textContent = (line + "\n" + document.getElementById("log").textContent).slice(0, 8000);
+				console.log(line);
+			};
+
+			// 30fps 演示画面：动态场景 + 帧计数/时间（确认画面在动、估算延迟）+ 每位观众的鼠标/点击/滚轮/按键（确认操作经数据通道回传）
+			// ?w=1280&h=720 调整分辨率
+			const c = document.getElementById("c");
+			const W = (c.width = +params.get("w") || 640);
+			const H = (c.height = +params.get("h") || 360);
+			const g = c.getContext("2d");
+			const k = H / 360;
+			const FONT = '"WenQuanYi Zen Hei", "Microsoft YaHei", "PingFang SC", sans-serif';
+			const MONO = '"DejaVu Sans Mono", Consolas, monospace';
+			const COLORS = ["#4fc3ff", "#ffb74d", "#81c784", "#f06292", "#ba68c8", "#fff176"];
+			const pointers = new Map(); // playerId -> { x, y, show, down, ripples, key, keyAt, color }
+			const bars = Array.from({ length: 14 }, (_, i) => 0.3 + 0.5 * Math.abs(Math.sin(i * 1.7)));
+			let frame = 0;
+			let zoom = 1;
+			const pointer = (id) => {
+				if (!pointers.has(id)) pointers.set(id, { x: W / 2, y: H / 2, show: false, down: false, ripples: [], key: "", keyAt: 0, color: COLORS[pointers.size % COLORS.length] });
+				return pointers.get(id);
+			};
+			const fitText = (text, maxW, size, weight = "") => {
+				let s = size;
+				do g.font = `${weight} ${s}px ${FONT}`;
+				while (g.measureText(text).width > maxW && (s -= 1) > 8);
+				return s;
+			};
+			const panel = (x, y, w, h) => {
+				g.fillStyle = "rgba(10,20,36,.62)";
+				g.strokeStyle = "rgba(120,180,255,.25)";
+				g.lineWidth = 1;
+				g.beginPath();
+				g.roundRect(x, y, w, h, 10 * k);
+				g.fill();
+				g.stroke();
+			};
+			// 用 Worker 计时：页面在后台时主线程定时器会被限流到 1Hz，Worker 不受影响，保证稳定 30fps 的测试负载
+			const ticker = new Worker(URL.createObjectURL(new Blob(["setInterval(() => postMessage(0), 33)"], { type: "text/javascript" })));
+			ticker.onmessage = () => {
+				frame++;
+				const t = frame / 30;
+				// 背景：深色渐变 + 网格
+				const bg = g.createLinearGradient(0, 0, W, H);
+				bg.addColorStop(0, "#07101f");
+				bg.addColorStop(1, `hsl(${210 + 20 * Math.sin(t / 6)},55%,16%)`);
+				g.fillStyle = bg;
+				g.fillRect(0, 0, W, H);
+				g.fillStyle = "rgba(120,180,255,.06)";
+				const step = 40 * k;
+				const off = (frame * 0.6 * k) % step;
+				for (let x = -off; x < W; x += step) g.fillRect(x, 0, 1, H);
+				for (let y = 0; y < H; y += step) g.fillRect(0, y, W, 1);
+
+				// 标题
+				g.fillStyle = "#fff";
+				fitText("云渲染演示 · UE 像素流", W * 0.55, 30 * k, "bold");
+				g.fillText("云渲染演示 · UE 像素流", 24 * k, 50 * k);
+				g.fillStyle = "rgba(200,225,255,.75)";
+				fitText("nginx 单端口 · TURN over TCP · 公网零 UDP 映射", W * 0.55, 15 * k);
+				g.fillText("nginx 单端口 · TURN over TCP · 公网零 UDP 映射", 24 * k, 76 * k);
+
+				// 中央雷达（滚轮缩放）
+				const cx = W * 0.5;
+				const cy = H * 0.52;
+				const R = 92 * k * zoom;
+				g.strokeStyle = "rgba(79,195,255,.35)";
+				g.lineWidth = 1.5 * k;
+				for (const f of [1, 0.66, 0.33]) {
+					g.beginPath();
+					g.arc(cx, cy, R * f, 0, Math.PI * 2);
+					g.stroke();
+				}
+				const a = t * 1.6;
+				const sweep = g.createConicGradient(a, cx, cy);
+				sweep.addColorStop(0, "rgba(79,195,255,.45)");
+				sweep.addColorStop(0.12, "rgba(79,195,255,0)");
+				sweep.addColorStop(1, "rgba(79,195,255,0)");
+				g.fillStyle = sweep;
+				g.beginPath();
+				g.arc(cx, cy, R, 0, Math.PI * 2);
+				g.fill();
+				for (let i = 0; i < 6; i++) {
+					const ang = t * (0.4 + i * 0.13) + i;
+					const rr = R * (0.35 + 0.1 * i);
+					g.fillStyle = COLORS[i % COLORS.length];
+					g.beginPath();
+					g.arc(cx + Math.cos(ang) * rr, cy + Math.sin(ang) * rr, 4 * k, 0, Math.PI * 2);
+					g.fill();
+				}
+				g.fillStyle = "#fff";
+				g.font = `bold ${15 * k}px ${FONT}`;
+				g.textAlign = "center";
+				g.fillText("实时渲染", cx, cy - 2 * k);
+				g.font = `${12 * k}px ${MONO}`;
+				g.fillText(`${W}x${H} @30fps`, cx, cy + 16 * k);
+				g.textAlign = "left";
+
+				// 右上信息面板
+				const pw = 230 * k;
+				const px = W - pw - 20 * k;
+				panel(px, 20 * k, pw, 92 * k);
+				g.fillStyle = "#cfe6ff";
+				g.font = `${13 * k}px ${MONO}`;
+				const now = new Date();
+				const time = now.toLocaleTimeString("zh-CN", { hour12: false, timeZone: "Asia/Shanghai" }) + "." + String(now.getMilliseconds()).padStart(3, "0");
+				g.fillText(`帧   ${frame}`, px + 14 * k, 44 * k);
+				g.fillText(`时间 ${time}`, px + 14 * k, 66 * k);
+				g.fillText(`观众 ${peers.size} 人在线`, px + 14 * k, 88 * k);
+
+				// 底部动态柱状图
+				const bw = 14 * k;
+				const bx0 = 24 * k;
+				const by = H - 54 * k;
+				panel(bx0 - 10 * k, by - 86 * k, bars.length * (bw + 6 * k) + 14 * k, 104 * k);
+				g.fillStyle = "rgba(200,225,255,.7)";
+				g.font = `${11 * k}px ${FONT}`;
+				g.fillText("模拟实时数据", bx0, by - 70 * k);
+				bars.forEach((b, i) => {
+					const v = 0.15 + 0.85 * Math.abs(Math.sin(t * (0.6 + b) + i));
+					const h = v * 56 * k;
+					const grd = g.createLinearGradient(0, by - h, 0, by);
+					grd.addColorStop(0, "#4fc3ff");
+					grd.addColorStop(1, "#1565c0");
+					g.fillStyle = grd;
+					g.fillRect(bx0 + i * (bw + 6 * k), by - h, bw, h);
+				});
+
+				// 提示
+				g.fillStyle = "rgba(220,235,255,.7)";
+				fitText("移动鼠标 / 点击 / 滚轮 / 键盘 —— 操作经 WebRTC 数据通道实时回传到渲染端", W * 0.5, 13 * k);
+				g.textAlign = "right";
+				g.fillText("移动鼠标 / 点击 / 滚轮 / 键盘 —— 操作经 WebRTC 数据通道实时回传到渲染端", W - 20 * k, H - 18 * k);
+				g.textAlign = "left";
+
+				// 观众的鼠标与点击涟漪
+				for (const [id, p] of pointers) {
+					p.ripples = p.ripples.filter((r) => frame - r.f < 24);
+					for (const r of p.ripples) {
+						const age = (frame - r.f) / 24;
+						g.strokeStyle = p.color;
+						g.globalAlpha = 1 - age;
+						g.lineWidth = 3 * k;
+						g.beginPath();
+						g.arc(r.x, r.y, (8 + 50 * age) * k, 0, Math.PI * 2);
+						g.stroke();
+						g.globalAlpha = 1;
+					}
+					if (!p.show) continue;
+					g.strokeStyle = p.color;
+					g.lineWidth = 2 * k;
+					g.beginPath();
+					g.arc(p.x, p.y, 10 * k, 0, Math.PI * 2);
+					g.moveTo(p.x - 18 * k, p.y);
+					g.lineTo(p.x + 18 * k, p.y);
+					g.moveTo(p.x, p.y - 18 * k);
+					g.lineTo(p.x, p.y + 18 * k);
+					g.stroke();
+					if (p.down) {
+						g.fillStyle = p.color;
+						g.beginPath();
+						g.arc(p.x, p.y, 6 * k, 0, Math.PI * 2);
+						g.fill();
+					}
+					g.fillStyle = p.color;
+					g.font = `${12 * k}px ${FONT}`;
+					const label = `观众 ${id}` + (p.key && frame - p.keyAt < 45 ? `  按键 ${p.key}` : "");
+					g.fillText(label, p.x + 16 * k, p.y - 14 * k);
+				}
+			};
+
+			// 解析观众经数据通道发来的输入（UE 像素流协议，坐标归一化为 0~65535）
+			function onInput(id, b) {
+				const v = new DataView(b.buffer, b.byteOffset, b.byteLength);
+				const p = pointer(id);
+				const X = (o) => (v.getUint16(o, true) / 65535) * W;
+				const Y = (o) => (v.getUint16(o, true) / 65535) * H;
+				switch (b[0]) {
+					case 70: p.show = true; break; // MouseEnter
+					case 71: p.show = false; p.down = false; break; // MouseLeave
+					case 72: p.x = X(2); p.y = Y(4); p.down = true; p.show = true; p.ripples.push({ x: p.x, y: p.y, f: frame }); break; // MouseDown
+					case 73: p.x = X(2); p.y = Y(4); p.down = false; break; // MouseUp
+					case 74: p.x = X(1); p.y = Y(3); p.show = true; break; // MouseMove
+					case 75: zoom = Math.min(1.8, Math.max(0.5, zoom + v.getInt16(1, true) / 1200)); p.x = X(3); p.y = Y(5); break; // MouseWheel
+					case 60: p.key = b[1] >= 48 && b[1] <= 90 ? String.fromCharCode(b[1]) : `#${b[1]}`; p.keyAt = frame; break; // KeyDown
+					case 80: case 82: if (b.length >= 6) { p.x = X(2); p.y = Y(4); p.show = true; if (b[0] === 80) p.ripples.push({ x: p.x, y: p.y, f: frame }); } break; // Touch
+				}
+			}
+			const stream = c.captureStream(30);
+
+			let iceServers = [];
+			const peers = new Map();
+			window.fakeUE = { peers, get iceServers() { return iceServers; } };
+
+			function utf16(type, str) {
+				const b = new Uint8Array(1 + str.length * 2);
+				b[0] = type;
+				const v = new DataView(b.buffer);
+				for (let i = 0; i < str.length; i++) v.setUint16(1 + i * 2, str.charCodeAt(i), true);
+				return b;
+			}
+
+			function connect() {
+				const ws = new WebSocket(signalUrl);
+				const send = (m) => ws.readyState === 1 && ws.send(JSON.stringify(m));
+				ws.onopen = () => log("signaling connected", signalUrl);
+				ws.onclose = () => {
+					log("signaling closed, retry in 2s");
+					peers.forEach((p) => p.pc.close());
+					peers.clear();
+					setTimeout(connect, 2000);
+				};
+				ws.onmessage = async (e) => {
+					const msg = JSON.parse(e.data);
+					if (msg.type === "config") {
+						iceServers = msg.peerConnectionOptions.iceServers || [];
+						return log("config iceServers", iceServers.map((s) => s.urls));
+					}
+					if (msg.type === "identify") return; // 像素流 1 行为：不回 endpointId
+					if (msg.type === "playerConnected") return startPeer(String(msg.playerId), send);
+					const p = peers.get(String(msg.playerId));
+					if (!p) return;
+					if (msg.type === "answer") await p.pc.setRemoteDescription({ type: "answer", sdp: msg.sdp });
+					else if (msg.type === "iceCandidate" && msg.candidate?.candidate) await p.pc.addIceCandidate(msg.candidate).catch((err) => log("addIceCandidate", String(err)));
+					else if (msg.type === "playerDisconnected") {
+						p.pc.close();
+						clearInterval(p.timer);
+						peers.delete(String(msg.playerId));
+						pointers.delete(String(msg.playerId));
+						log("player", msg.playerId, "disconnected");
+					}
+				};
+			}
+
+			async function startPeer(id, send) {
+				peers.get(id)?.pc.close();
+				const pc = new RTCPeerConnection({ iceServers, iceTransportPolicy: params.get("relay") === "1" ? "relay" : "all" });
+				const p = { pc, received: 0 };
+				peers.set(id, p);
+				stream.getTracks().forEach((t) => pc.addTrack(t, stream));
+				const dc = pc.createDataChannel("datachannel");
+				dc.binaryType = "arraybuffer";
+				dc.onopen = () => {
+					log("data channel open", id);
+					let n = 0;
+					p.timer = setInterval(() => dc.readyState === "open" && dc.send(utf16(1, JSON.stringify({ from: "fake-ue", n: ++n }))), 1000);
+				};
+				dc.onmessage = (e) => {
+					const b = new Uint8Array(e.data);
+					p.received++;
+					onInput(id, b);
+					if (b[0] === 50) {
+						const len = new DataView(b.buffer).getUint16(1, true);
+						const s = String.fromCharCode(...new Uint16Array(b.slice(3, 3 + len * 2).buffer));
+						log("UIInteraction from", id, s);
+						dc.send(utf16(1, JSON.stringify({ echo: s })));
+					}
+				};
+				pc.onicecandidate = (e) => e.candidate && send({ type: "iceCandidate", playerId: id, candidate: e.candidate.toJSON() });
+				pc.onconnectionstatechange = async () => {
+					log("player", id, "state", pc.connectionState);
+					if (pc.connectionState === "connected") {
+						const st = await pc.getStats();
+						st.forEach((r) => {
+							if (r.type === "transport" && r.selectedCandidatePairId) {
+								const pair = st.get(r.selectedCandidatePairId);
+								const l = st.get(pair.localCandidateId), rm = st.get(pair.remoteCandidateId);
+								p.pair = { local: `${l.candidateType}/${l.relayProtocol || l.protocol} ${l.address}:${l.port}`, remote: `${rm.candidateType} ${rm.address}:${rm.port}` };
+								log("selected pair", p.pair);
+							}
+						});
+					}
+				};
+				const offer = await pc.createOffer();
+				await pc.setLocalDescription(offer);
+				send({ type: "offer", playerId: id, sdp: offer.sdp });
+				log("offer sent to", id);
+			}
+
+			connect();
+		</script>
+	</body>
+</html>
