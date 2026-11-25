@@ -1,0 +1,119 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 运行环境最低 Node 22.13（node:sqlite），单文件可执行程序用 Node 26 打包：两个版本都要通过
+  node:
+    name: node ${{ matrix.node }} · test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22", "26"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: npm ci
+        run: npm ci --no-audit --no-fund
+
+      # 测试含少量时序相关用例（心跳、超时、排队），共享 CI 机器偶发抖动时重跑一次；仍失败则把原因写成注解
+      - name: npm test
+        run: |
+          set +e
+          npm test > test.log 2>&1
+          status=$?
+          if [ $status -ne 0 ]; then
+            echo "第一次运行失败，重跑一次："
+            cat test.log
+            npm test > test.log 2>&1
+            status=$?
+          fi
+          cat test.log
+          [ $status -eq 0 ] || bash .github/scripts/annotate-test-log.sh test.log "npm test (node ${{ matrix.node }})"
+          exit $status
+
+      # 运行时依赖的已知漏洞（只看生产依赖，高危及以上即失败）
+      - name: npm audit
+        if: matrix.node == '26'
+        run: npm audit --omit=dev --audit-level=high
+
+  # 前端（管理端 ES 模块、播放页 SDK）与服务端脚本语法检查
+  web:
+    name: web · syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+
+      - name: 版本号一致（package.json 与 src/app.js）
+        run: |
+          pkg=$(node -p "require('./package.json').version")
+          app=$(sed -n 's/^const VERSION = "\([^"]*\)";.*/\1/p' src/app.js)
+          if [ "$pkg" != "$app" ]; then
+            echo "::error file=src/app.js,title=版本号不一致::package.json 为 $pkg，src/app.js 为 $app"
+            exit 1
+          fi
+          echo "版本 $pkg"
+
+      - name: node --check
+        run: |
+          status=0
+          for f in server.js src/*.js lib/*.js agent/*.js build/*.js admin/*.js admin/pages/*.js public/*.js test/*.js test/load/*.js test/e2e/*.js; do
+            if ! node --check "$f" 2> err.txt; then
+              echo "::error file=$f,title=语法错误::$(head -3 err.txt | tr '\n' ' ' | sed 's/%/%25/g')"
+              status=1
+            fi
+          done
+          exit $status
+
+  # 镜像能构建并启动（不推送）：修改 Dockerfile / 依赖后及时发现问题
+  docker:
+    name: docker · build / smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: 构建
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          target: platform
+          load: true
+          tags: ps-platform:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 启动自检
+        run: |
+          docker run -d --name smoke -p 18800:88 -e PS_ADMIN_PASSWORD=CiSmoke12345 ps-platform:ci
+          ok=0
+          for i in $(seq 1 40); do
+            if curl -sf http://127.0.0.1:18800/healthz | grep -q '"status":"ok"'; then ok=1; break; fi
+            sleep 1
+          done
+          [ $ok = 1 ] && curl -sf -o /dev/null http://127.0.0.1:18800/admin/ || ok=0
+          if [ $ok != 1 ]; then
+            docker logs smoke | tail -n 30
+            docker logs smoke 2>&1 | tail -n 15 | sed 's/%/%25/g' | while IFS= read -r l; do [ -n "$l" ] && echo "::error title=docker smoke::$l"; done
+            exit 1
+          fi
+          curl -s http://127.0.0.1:18800/healthz
+          docker rm -f smoke >/dev/null

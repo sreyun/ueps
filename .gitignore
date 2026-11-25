@@ -8,3 +8,6 @@ deploy/acme/
 deploy/data/
 .DS_Store
 Thumbs.db
+
+# 本地运行配置（可能含口令 / 密钥）
+/config.json

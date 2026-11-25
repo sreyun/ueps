@@ -2,7 +2,7 @@
 #   Windows → ps-platform-<版本>-windows-x64.zip（内含 ps-platform.exe）
 #   Linux   → ps-platform-<版本>-linux-x64.tar.gz（内含 ps-platform，glibc ≥ 2.28）
 # 也可在 Actions 页面手动运行（填写已存在的标签），用于给已有标签补发构建产物。
-name: release
+name: Release · 可执行程序（Windows / Linux）
 
 on:
   push:
@@ -38,6 +38,20 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
+      # 防止 package.json / src/app.js 忘记改版本号：发布包名与程序内版本必须等于标签
+      - name: 校验标签与版本号一致
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        run: |
+          ver="${TAG#v}"; core="${ver%%-*}"
+          pkg=$(node -p "require('./package.json').version")
+          app=$(sed -n 's/^const VERSION = "\([^"]*\)";.*/\1/p' src/app.js)
+          for v in "$pkg" "$app"; do
+            if [ "$v" != "$ver" ] && [ "$v" != "$core" ]; then
+              echo "::error title=version::标签 $TAG 与 package.json（$pkg）/ src/app.js（$app）中的版本号不一致，发版前请先修改版本号"
+              exit 1
+            fi
+          done
+          echo "版本号一致：$ver"
       - run: npm ci --no-audit --no-fund
       # 测试含少量时序相关用例，CI 机器偶发抖动时重试一次
       - run: npm test || npm test

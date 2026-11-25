@@ -16,6 +16,7 @@
 10. [排障](#10-排障)
 11. [日常运维](#11-日常运维)
 12. [实测记录（测试服务器）](#12-实测记录测试服务器)
+13. [构建与发布（CI / 华为云 SWR）](#13-构建与发布ci--华为云-swr)
 
 ---
 
@@ -141,6 +142,27 @@ cd deploy && docker compose up -d --build
 ```
 
 平台重启期间观众会断开并自动重连；渲染机上正在运行的 UE **不会被杀掉**，平台启动后自动接管（日志 `接管 … 仍在运行的实例`）。
+
+### 3.6 使用预构建镜像（华为云 SWR，免本地构建）
+
+每个发布版本都会自动构建 `linux/amd64`、`linux/arm64` 两种架构的平台镜像并推送到华为云 SWR（构建方式见第 13 节）。网关拉不到 Docker Hub、或不想在网关上构建时直接使用：
+
+```bash
+# deploy/.env
+PS_IMAGE=swr.cn-east-3.myhuaweicloud.com/sreyun/ps-platform:1.2.2
+
+docker compose pull platform           # 拉取平台镜像（nginx 镜像同样从 NGINX_IMAGE 拉取）
+docker compose up -d --no-build
+```
+
+| 镜像标签 | 含义 |
+|---|---|
+| `1.2.2` | 固定版本（**生产环境推荐**，升级时显式修改） |
+| `1.2` / `1` | 该次版本 / 主版本的最新发布 |
+| `latest` | 最新正式发布 |
+| `sha-xxxxxxx` | 对应某次提交，排查问题时使用 |
+
+升级：修改 `PS_IMAGE` 的版本号后重复上面两条命令。私有仓库需先 `docker login swr.cn-east-3.myhuaweicloud.com`（登录指令在华为云 SWR 控制台「我的镜像 → 客户端上传」中获取）。演示叠加的 `demo-agent` 镜像仍在本地构建。
 
 ## 4. 方式 B：Windows / Linux 直接运行（可执行程序或 Node.js）
 
@@ -459,3 +481,49 @@ ssh -p <SSH端口> -L 9443:127.0.0.1:9443 -L 18800:127.0.0.1:18800 <用户>@<服
 | 并发 1000（直连观众口） | 1000/1000，p50 211ms / p99 306ms，每台 50 个实例，内存 81→115MB，4.1 秒回收，0 错误 |
 
 部署过程中发现并修复：① Agent 心跳未记录 pong，约每 60 秒被误判离线一次（导致启动中的实例失败）；② 连接限流误伤同一渲染机上的多个 UE（现只限制观众连接，默认 20/s、突发 100）。
+
+## 13. 构建与发布（CI / 华为云 SWR）
+
+仓库内置三条 GitHub Actions 工作流（`.github/workflows/`）：
+
+| 工作流 | 触发 | 内容 |
+|---|---|---|
+| `ci.yml`（ci） | 每次推送与 PR | Node 22 / 26 两个版本跑全部测试（失败原因写成注解，运行页面直接可见）；生产依赖漏洞审计；管理端 / 播放页 / 服务端脚本语法检查；平台镜像构建并启动自检（不推送） |
+| `release.yml`（可执行程序） | 推送 `v*` 标签 | 校验标签与版本号一致 → 测试 → 分别在 Windows / Linux 上打包并冒烟测试 → 上传到该标签的 Release（zip、tar.gz、SHA256SUMS.txt） |
+| `docker.yml`（镜像） | 推送 `v*` 标签 | 校验标签与版本号一致 → 构建 amd64 镜像并启动自检（健康接口版本号须等于标签）→ 构建 amd64 + arm64 并推送到华为云 SWR → 漏洞扫描、SBOM、镜像签名（这三步失败不影响发布，结果写在运行摘要里） |
+
+两条发布工作流都可在 Actions 页面手动运行（填写已存在的标签），用于给已有标签补发构建产物或镜像。
+
+### 13.1 发布一个新版本
+
+1. 修改版本号：`package.json` 的 `version` 与 `src/app.js` 的 `VERSION`（两处必须一致，发布工作流会校验）。
+2. 在 `CHANGELOG.md` 增加 `## <版本>` 一节（会自动作为 Release 说明）。
+3. 提交并推送 main，等 ci 通过后打标签：
+
+```bash
+git tag -a v1.2.3 -m "ps-platform 1.2.3"
+git push origin v1.2.3
+```
+
+预发布版本（如 `v1.3.0-rc1`）只打完整版本号与 `sha-` 两个镜像标签，不会更新 `latest`、`1.3`。
+
+### 13.2 配置华为云 SWR（首次）
+
+1. 华为云控制台 → 容器镜像服务 SWR → 创建组织（默认用 `sreyun`，与下面的 `SWR_NAMESPACE` 一致）。
+2. 统一身份认证 IAM → 为发布专用的 IAM 用户创建访问密钥（AK/SK），授予该组织的推送权限（SWR 中「组织 → 授权」给该用户编辑权限，或系统策略 `SWR Admin`）。
+3. GitHub 仓库 → Settings → Secrets and variables → Actions：
+
+| 类型 | 名称 | 值 |
+|---|---|---|
+| Secret | `HW_ACCESS_KEY` | AK |
+| Secret | `HW_SECRET_KEY` | SK |
+| Variable（可选） | `SWR_REGISTRY` | 仓库域名，默认 `swr.cn-east-3.myhuaweicloud.com`（华东-上海一）；其它区域如 `swr.cn-north-4.myhuaweicloud.com` |
+| Variable（可选） | `SWR_NAMESPACE` | 组织名，默认 `sreyun` |
+| Variable（可选） | `IMAGE_NAME` | 镜像名，默认 `ps-platform` |
+| Variable（可选） | `NPM_REGISTRY` | 构建时的 npm 源，默认官方源 |
+
+登录 SWR 用的用户名 / 口令由 AK/SK 在工作流中现场推导（用户名 `<区域>@<AK>`，口令为以 SK 为密钥对 AK 做 HMAC-SHA256 的十六进制），无需在控制台生成长期登录指令。组织级（Organization）同名 Secret 同样生效。
+
+4. 配置后在 Actions 页面手动运行「Release · 镜像构建与推送（华为云 SWR）」并填写已有标签（例如 `v1.2.2`），即可补推该版本镜像。
+
+镜像默认推送为私有。需要匿名拉取时，在 SWR 控制台把该镜像设为「公开」。

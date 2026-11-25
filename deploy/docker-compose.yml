@@ -23,7 +23,8 @@ services:
       args:
         NODE_IMAGE: ${NODE_IMAGE:-node:22-alpine}
         NPM_REGISTRY: ${NPM_REGISTRY:-}
-    image: ps-platform:1.2.2
+    # 使用预构建镜像（华为云 SWR）时在 .env 设置 PS_IMAGE，然后 docker compose pull platform && docker compose up -d --no-build
+    image: ${PS_IMAGE:-ps-platform:1.2.2}
     network_mode: host
     restart: unless-stopped
     init: true                           # tini 作为 1 号进程：转发信号、回收孤儿子进程
