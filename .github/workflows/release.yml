@@ -191,7 +191,7 @@ jobs:
             echo "| 渲染机 · Linux Agent | \`ps-platform-agent-$ver-linux-x64\` | \`./ps-platform-agent-… --agent …\` |"
             echo ""
             echo "解压后按包内QUICKSTART.txt（快速上手）或 docs/INSTALL.md 运行，无需安装 Node.js；docker-compose 部署见 deploy/。"
-            echo "渲染机一般不必单独下载：在管理端「机器 / GPU → 接入渲染机」复制安装链接，在渲染机浏览器中打开即可（Docker 部署的平台首次需点「从发布页获取」）。"
+            echo "渲染机一般不必单独下载：在管理端「渲染机 / GPU → 接入渲染机」复制安装链接，在渲染机浏览器中打开即可（Docker 部署的平台首次需点「从发布页获取」）。"
             echo ""
             cat notes.md
           } > release-notes.md
