@@ -14,14 +14,16 @@
 ## 工作原理
 
 ```mermaid
-flowchart LR
+flowchart TB
   B["浏览器 / 业务系统 iframe"]
   subgraph GW["网关（Linux docker-compose 或 Windows exe）"]
+    direction LR
     N["nginx<br/>唯一对外 TCP 端口"]
     P["ps-platform<br/>信令 · 调度 · 管理端"]
     T["内置 TURN"]
   end
   subgraph RM["渲染机 × N"]
+    direction LR
     A["Agent"]
     U["UE 像素流"]
   end
