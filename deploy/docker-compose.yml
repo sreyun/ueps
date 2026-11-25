@@ -23,7 +23,7 @@ services:
       args:
         NODE_IMAGE: ${NODE_IMAGE:-node:22-alpine}
         NPM_REGISTRY: ${NPM_REGISTRY:-}
-    image: ps-platform:1.2
+    image: ps-platform:1.2.1
     network_mode: host
     restart: unless-stopped
     init: true                           # tini 作为 1 号进程：转发信号、回收孤儿子进程

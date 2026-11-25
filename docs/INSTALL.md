@@ -1,6 +1,6 @@
 # ps-platform 安装部署与运维手册
 
-> 适用版本：ps-platform 1.2.0　|　运行环境：Node.js ≥ 22.13（或直接使用打包好的 `ps-platform.exe`，无需安装 Node.js）
+> 适用版本：ps-platform 1.2.1　|　运行环境：Node.js ≥ 22.13（或直接使用打包好的 `ps-platform.exe`，无需安装 Node.js）
 
 目录
 

@@ -1,5 +1,13 @@
 # 更新记录
 
+## 1.2.1
+
+- 新增自动发布：推送 `v*` 标签时 GitHub Actions 自动运行测试，分别在 Windows / Linux 上构建可执行程序并做冒烟测试，上传到该标签的 Release：
+  - `ps-platform-<版本>-windows-x64.zip`（内含 `ps-platform.exe`）
+  - `ps-platform-<版本>-linux-x64.tar.gz`（内含 `ps-platform`，glibc ≥ 2.28）
+  - `SHA256SUMS.txt`
+- 功能与 1.2.0 相同。
+
 ## 1.2.0
 
 全面评审（产品 / UX / UI / 客户使用视角）与管理端、观众端界面重构。保持既有业务逻辑与接口兼容。
