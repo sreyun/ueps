@@ -749,10 +749,57 @@ namespace PsAgentSetup
 			finally { try { File.Delete(file); } catch { } }
 		}
 
-		public static void RunTask(Action<string> log)
+		/** 安装目录中的宿主是否在运行（不含当前进程） */
+		public static bool HostRunning(string host)
+		{
+			int self = Process.GetCurrentProcess().Id;
+			foreach (var p in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(Util.HostExe)))
+			{
+				try { if (p.Id != self && Util.SamePath(Util.ImagePath(p.Id) ?? "", host)) return true; }
+				catch { }
+				finally { p.Dispose(); }
+			}
+			return false;
+		}
+
+		/**
+		 * 立即启动 Agent：先按计划任务启动；个别环境（例如远程桌面登录的 Windows Server）计划任务会拒绝按需启动
+		 * （schtasks 仍返回成功，任务结果 0x800710E0），此时直接在当前会话启动宿主。之后每次登录仍由计划任务启动。
+		 */
+		public static void RunTask(string host, Action<string> log)
 		{
 			log("启动 Agent（计划任务）");
-			Run(Util.Sys("schtasks.exe"), "/Run /TN " + Util.TaskName, "启动计划任务");
+			string o;
+			Util.Exec(Util.Sys("schtasks.exe"), "/Run /TN " + Util.TaskName, out o);
+			for (int i = 0; i < 8; i++)
+			{
+				Thread.Sleep(500);
+				if (HostRunning(host)) return;
+			}
+			log("计划任务未能立即启动，改为在当前会话中直接启动 Agent（以后登录 Windows 时仍由计划任务自动启动）");
+			// 优先经 WMI 启动：宿主不成为安装程序的子进程，批量部署脚本中的 Start-Process -Wait 不会因等待它而卡住
+			if (StartDetached(Util.Q(host) + " /run", Path.GetDirectoryName(host))) return;
+			var psi = new ProcessStartInfo(host, "/run");
+			psi.UseShellExecute = false;
+			psi.WorkingDirectory = Path.GetDirectoryName(host);
+			Process.Start(psi);
+		}
+
+		/** 经 WMI（Win32_Process.Create）在当前会话启动进程，进程不属于调用者的进程树 / 作业对象 */
+		static bool StartDetached(string commandLine, string dir)
+		{
+			try
+			{
+				using (var cls = new System.Management.ManagementClass("Win32_Process"))
+				{
+					var inParams = cls.GetMethodParameters("Create");
+					inParams["CommandLine"] = commandLine;
+					inParams["CurrentDirectory"] = dir;
+					var outParams = cls.InvokeMethod("Create", inParams, null);
+					return Convert.ToInt32(outParams["ReturnValue"], CultureInfo.InvariantCulture) == 0;
+				}
+			}
+			catch { return false; }
 		}
 
 		public static void RemoveTask(Action<string> log)
@@ -887,7 +934,7 @@ namespace PsAgentSetup
 			Step("启动 Agent");
 			long mark = Host.LogLength(data);
 			if (o.Mode == "service") Ops.StartService(Log);
-			else Ops.RunTask(Log);
+			else Ops.RunTask(host, Log);
 			Progress(90);
 
 			Step("等待连接平台");

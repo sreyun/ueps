@@ -99,7 +99,7 @@ if (isWin) {
 	const stubDir = path.join(OUT, "agent-setup");
 	fs.mkdirSync(stubDir, { recursive: true });
 	const stub = path.join(stubDir, "ps-agent-setup-stub.exe");
-	const refs = ["System.dll", "System.Core.dll", "System.Drawing.dll", "System.Windows.Forms.dll", "System.ServiceProcess.dll", "System.Web.Extensions.dll"].map((r) => `/r:${r}`);
+	const refs = ["System.dll", "System.Core.dll", "System.Drawing.dll", "System.Windows.Forms.dll", "System.ServiceProcess.dll", "System.Web.Extensions.dll", "System.Management.dll"].map((r) => `/r:${r}`);
 	execFileSync(csc, ["/nologo", "/codepage:65001", "/target:winexe", "/platform:x64", "/optimize+", `/out:${stub}`, `/win32manifest:${path.join(ROOT, "agent-setup", "app.manifest")}`, ...refs, path.join(ROOT, "agent-setup", "AgentSetup.cs"), path.join(tmpDir, "BuildInfo.cs")], { stdio: "inherit" });
 	fs.rmSync(tmpDir, { recursive: true, force: true });
 	// 完整安装程序 = 向导 + [8 字节原始大小][gzip(ps-platform.exe)] + [8 字节段长度][PSAGENT1]

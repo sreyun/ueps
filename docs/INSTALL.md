@@ -1,6 +1,6 @@
 # ps-platform 安装部署与运维手册
 
-> 适用版本：ps-platform 1.3.0　|　运行环境：Node.js ≥ 22.13（或直接使用打包好的 `ps-platform.exe`，无需安装 Node.js）
+> 适用版本：ps-platform 1.3.1　|　运行环境：Node.js ≥ 22.13（或直接使用打包好的 `ps-platform.exe`，无需安装 Node.js）
 
 目录
 
@@ -151,7 +151,7 @@ cd deploy && docker compose up -d --build
 
 ```bash
 # deploy/.env
-PS_IMAGE=swr.cn-east-3.myhuaweicloud.com/sreyun/ps-platform:1.3.0
+PS_IMAGE=swr.cn-east-3.myhuaweicloud.com/sreyun/ps-platform:1.3.1
 
 docker compose pull platform           # 拉取平台镜像（nginx 镜像同样从 NGINX_IMAGE 拉取）
 docker compose up -d --no-build
@@ -159,7 +159,7 @@ docker compose up -d --no-build
 
 | 镜像标签 | 含义 |
 |---|---|
-| `1.3.0` | 固定版本（**生产环境推荐**，升级时显式修改） |
+| `1.3.1` | 固定版本（**生产环境推荐**，升级时显式修改） |
 | `1.3` / `1` | 该次版本 / 主版本的最新发布 |
 | `latest` | 最新正式发布 |
 | `sha-xxxxxxx` | 对应某次提交，排查问题时使用 |

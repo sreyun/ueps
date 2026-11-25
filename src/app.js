@@ -28,7 +28,7 @@ const { firstLanIPv4, ipInList, randomSecret, throttle } = require("./util.js");
 const { createAgent } = require("../agent/agent.js");
 const { AgentPackages, configSection } = require("./downloads.js");
 
-const VERSION = "1.3.0";
+const VERSION = "1.3.1";
 
 function createApp({ config, assetsDir, log, selfCommand, env = process.env }) {
 	log = log || createLogger({ level: config.log.level, dir: config.log.file ? path.join(config.dataDir, "logs") : null, retentionDays: config.log.retentionDays });

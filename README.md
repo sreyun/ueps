@@ -63,7 +63,7 @@ flowchart TB
 | `ps-platform-agent-<版本>-linux-x64` | 渲染机 · Linux Agent 程序 |
 | `SHA256SUMS.txt` | 校验和 |
 
-Docker 镜像：`swr.cn-east-3.myhuaweicloud.com/sreyun/ps-platform:<版本>`（标签 `1.3.0` / `1.3` / `1` / `latest`）。
+Docker 镜像：`swr.cn-east-3.myhuaweicloud.com/sreyun/ps-platform:<版本>`（标签 `1.3.1` / `1.3` / `1` / `latest`）。
 
 ## 快速开始
 
@@ -72,7 +72,7 @@ Docker 镜像：`swr.cn-east-3.myhuaweicloud.com/sreyun/ps-platform:<版本>`（
 ```bash
 cd deploy && cp .env.example .env && vi .env     # 至少填写 LAN_IP、UE_SUBNETS；建议填写 PS_ADMIN_PASSWORD、PS_AGENT_TOKEN、TURN_SECRET
 mkdir -p certs                                   # 可选：放入 fullchain.pem / privkey.pem 启用 https；没有证书时以仅 http 模式运行
-docker compose up -d --build                     # 或在 .env 设置 PS_IMAGE=swr.cn-east-3.myhuaweicloud.com/sreyun/ps-platform:1.3.0 后：
+docker compose up -d --build                     # 或在 .env 设置 PS_IMAGE=swr.cn-east-3.myhuaweicloud.com/sreyun/ps-platform:1.3.1 后：
                                                  #   docker compose pull platform && docker compose up -d --no-build
 docker compose ps                                # platform、nginx 均为 healthy
 ```
