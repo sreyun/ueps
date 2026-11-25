@@ -76,18 +76,36 @@ jobs:
       - name: 冒烟测试（启动程序并检查健康接口）
         shell: bash
         run: |
-          set -e
-          dir=$(ls -d dist/ps-platform-*/ | head -1)
-          cd "$dir"
+          # 在临时目录解压发布包运行（与用户实际使用方式一致，也不影响上传的压缩包）
+          work=$(mktemp -d)
+          archive=$(ls dist/ps-platform-*.zip dist/ps-platform-*.tar.gz 2>/dev/null | head -1)
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            "$SYSTEMROOT/System32/tar.exe" -xf "$archive" -C "$(cygpath -w "$work")"   # Windows tar 需要 Windows 路径
+          else
+            tar -xzf "$archive" -C "$work"
+          fi
+          cd "$work"/ps-platform-*/ || { echo "::error title=smoke::解压失败"; exit 1; }
           printf '{"http":{"port":18950,"publicPort":18951,"host":"127.0.0.1"},"localAgent":{"enable":false},"log":{"level":"info","file":false}}' > config.json
           bin=./ps-platform; [ -f ps-platform.exe ] && bin=./ps-platform.exe
           PS_ADMIN_PASSWORD=CiSmoke12345 $bin > run.log 2>&1 &
-          for i in $(seq 1 30); do curl -sf http://127.0.0.1:18950/healthz && break; sleep 1; done
-          curl -sf http://127.0.0.1:18950/healthz | grep -q '"status":"ok"'
-          curl -sf -o /dev/null http://127.0.0.1:18950/admin/
-          curl -sf -o /dev/null "http://127.0.0.1:18951/video.html?urlPrefix=default"
-          kill %1 || true
-          rm -rf config.json run.log data
+          ok=0
+          for i in $(seq 1 40); do
+            if curl -sf http://127.0.0.1:18950/healthz | grep -q '"status":"ok"'; then ok=1; break; fi
+            sleep 1
+          done
+          if [ $ok = 1 ]; then
+            curl -sf -o /dev/null http://127.0.0.1:18950/admin/ || ok=0
+            curl -sf -o /dev/null "http://127.0.0.1:18951/video.html?urlPrefix=default" || ok=0
+          fi
+          # Windows 上直接结束进程（Git Bash 的 kill 对原生进程不可靠）；不再删除数据目录（进程退出前文件仍被占用）
+          if [ "$RUNNER_OS" = "Windows" ]; then taskkill //F //T //IM ps-platform.exe > /dev/null 2>&1 || true; else kill %1 2>/dev/null || true; fi
+          if [ $ok != 1 ]; then
+            cat run.log
+            tail -n 20 run.log | sed 's/%/%25/g' | while IFS= read -r l; do [ -n "$l" ] && echo "::error title=smoke::$l"; done
+            echo "::error title=smoke::冒烟测试失败（健康接口 / 管理端 / 播放页未全部返回 200）"
+            exit 1
+          fi
+          echo "smoke test passed"
       - uses: actions/upload-artifact@v4
         with:
           name: package-${{ matrix.os }}
