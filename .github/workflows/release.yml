@@ -78,7 +78,10 @@ jobs:
         run: |
           # 在临时目录解压发布包运行（与用户实际使用方式一致，也不影响上传的压缩包）
           work=$(mktemp -d)
-          archive=$(ls dist/ps-platform-*.zip dist/ps-platform-*.tar.gz 2>/dev/null | head -1)
+          shopt -s nullglob   # Actions 以 bash -eo pipefail 运行：不能用会失败的 ls 通配
+          files=(dist/ps-platform-*.zip dist/ps-platform-*.tar.gz)
+          archive="${files[0]}"
+          [ -n "$archive" ] || { echo "::error title=smoke::没有找到发布包"; exit 1; }
           if [ "$RUNNER_OS" = "Windows" ]; then
             "$SYSTEMROOT/System32/tar.exe" -xf "$archive" -C "$(cygpath -w "$work")"   # Windows tar 需要 Windows 路径
           else
