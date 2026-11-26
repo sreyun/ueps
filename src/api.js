@@ -3,10 +3,11 @@
  * REST API（/api/v1）。默认需要登录（会话 Cookie 或 Bearer API 令牌）；opts.role 指定最低角色；写操作统一记审计。
  *   opts.public     无需登录          opts.playerSafe  观众口也可访问
  *   opts.tool       工具接口（设置 publicTools 后免登录）  opts.noToken  禁止 API 令牌调用（账户安全相关）
+ *   opts.tokenOnly  只允许 API 令牌调用（业务系统后台使用，如单点登录链接）
  *   opts.rawBody    不解析 JSON，处理函数自行读取请求体（上传）
  */
-const { sendJson } = require("./http.js");
-const { hashPassword, verifyPasswordAsync, checkPasswordPolicy, signJwt, hasRole } = require("./auth.js");
+const { sendJson, sendText } = require("./http.js");
+const { hashPassword, verifyPasswordAsync, checkPasswordPolicy, signJwt, verifyJwt, hasRole } = require("./auth.js");
 const { totpSecret, totpVerify, otpauthUrl, newApiToken } = require("./security.js");
 const { pathfind, coordinateConvert } = require("./tools.js");
 const { newId } = require("./util.js");
@@ -66,6 +67,52 @@ function registerApi(router, ctx) {
 		{ public: true }
 	);
 	router.post("/api/v1/auth/logout", async (req, res) => (setSessionCookie(req, res, "", 0), sendJson(res, 200, { ok: true })), { public: true });
+
+	/*
+	 * 单点登录（业务系统免登录进入管理端）：业务系统后台用管理员 API 令牌为某个用户生成一次性登录链接，
+	 * 浏览器打开后直接登录为该用户（不再要求口令与两步验证——由持有管理员令牌的业务系统负责身份认证）。
+	 * 链接默认 60 秒内有效、只能使用一次。
+	 */
+	const ssoUsed = new Map(); // jti -> 过期时间（防止重放）
+	router.post(
+		"/api/v1/auth/sso-link",
+		async (req, res, { body }) => {
+			const name = String(body.username || "").trim();
+			const u = name ? store.getUserByName(name) : body.userId ? store.getUser(+body.userId) : null;
+			if (!u) throw httpErr(404, "用户不存在");
+			if (u.disabled) throw httpErr(409, "该用户已被禁用");
+			const ttl = Math.min(600, Math.max(10, Math.round(+body.ttl || 60)));
+			const redirect = /^\/[a-z-]*$/.test(String(body.redirect || "")) ? body.redirect : "/";
+			let base = String(body.base || "").trim().replace(/\/+$/, "");
+			if (base && !/^https?:\/\/[^/\s?#]+$/i.test(base)) throw httpErr(400, "base 须为 http(s)://主机[:端口]（管理端地址，不带路径）");
+			if (!base) base = `${req.socket.encrypted || req.headers["x-forwarded-proto"] === "https" ? "https" : "http"}://${req.headers.host}`;
+			const t = signJwt({ typ: "sso", sub: u.id, tv: u.token_version || 0, jti: newId(16), r: redirect }, secrets.jwt, ttl);
+			audit(req, "auth.sso_link", u.username, { ttl, by: req.user.username });
+			sendJson(res, 200, { url: `${base}/api/v1/auth/sso?t=${t}`, username: u.username, expiresAt: Date.now() + ttl * 1000 });
+		},
+		{ role: "admin", tokenOnly: true }
+	);
+	router.get(
+		"/api/v1/auth/sso",
+		async (req, res, { query }) => {
+			const fail = (msg) => sendText(res, 403, `${msg}，请从业务系统重新进入。\n`);
+			const c = verifyJwt(query.t, secrets.jwt);
+			if (!c || c.typ !== "sso" || !c.jti) return fail("登录链接无效或已过期");
+			const now = Date.now();
+			for (const [k, exp] of ssoUsed) if (exp < now) ssoUsed.delete(k);
+			if (ssoUsed.has(c.jti)) return fail("登录链接已使用过");
+			const u = store.getUser(c.sub);
+			if (!u || u.disabled || (u.token_version || 0) !== (c.tv || 0)) return fail("该用户不可用或登录已被撤销");
+			ssoUsed.set(c.jti, (c.exp || 0) * 1000 || now + 600000);
+			store.updateUser(u.id, { last_login_at: now });
+			issueSession(req, res, u);
+			store.audit({ username: u.username, ip: req.clientIp, action: "auth.sso_login" });
+			metrics.inc("logins");
+			res.writeHead(302, { Location: `/admin/#${/^\/[a-z-]*$/.test(c.r || "") ? c.r : "/"}`, "Cache-Control": "no-store" });
+			res.end();
+		},
+		{ public: true }
+	);
 	router.post(
 		"/api/v1/auth/logout-all",
 		async (req, res) => {
@@ -410,9 +457,9 @@ function registerApi(router, ctx) {
 			const hours = Math.max(0, +body.hours || 0);
 			const id = newId(12);
 			const expiresAt = hours ? Date.now() + hours * 3600000 : null;
-			const link = store.createShareLink({ id, program_id: pid, note: String(body.note || "").slice(0, 200), expires_at: expiresAt, max_uses: Math.max(0, +body.maxUses || 0), created_by: req.user.username });
+			const link = store.createShareLink({ id, program_id: pid, note: String(body.note || "").slice(0, 200), expires_at: expiresAt, max_uses: Math.max(0, +body.maxUses || 0), created_by: req.user.username, vip: !!body.vip });
 			const token = signJwt({ typ: "share", pid, lid: id }, secrets.jwt, hours ? hours * 3600 : 0);
-			audit(req, "share.create", id, { programId: pid, hours, maxUses: link.max_uses });
+			audit(req, "share.create", id, { programId: pid, hours, maxUses: link.max_uses, vip: link.vip });
 			sendJson(res, 201, { ...link, path: `/play/${encodeURIComponent(pid)}?token=${token}` });
 		},
 		{ role: "operator" }

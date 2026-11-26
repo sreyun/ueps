@@ -26,7 +26,7 @@ const SpecialKeyCodes = {
 
 // https://developer.mozilla.org/en-US/docs/Web/API/MouseEvent/button
 /** 服务端的"终止"关闭码：收到后不再自动重连（见 docs/API.md「观众连接关闭码」） */
-const FATAL_CLOSE_CODES = new Set([1008, 4000, 4001, 4002, 4003, 4004, 4005, 4006]);
+const FATAL_CLOSE_CODES = new Set([1008, 4000, 4001, 4002, 4003, 4004, 4005, 4006, 4007]);
 
 const MouseButton = {
 	MainButton: 0, // Left button.

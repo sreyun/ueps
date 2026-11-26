@@ -176,3 +176,107 @@ test("an admin cannot disable their own account", async () => {
 	assert.strictEqual(r.status, 409);
 	assert.strictEqual((await P.api("GET", "/api/v1/auth/me")).status, 200, "still logged in");
 });
+
+/* ---------------------------------------------- 企业版付费能力：全新实例 / VIP / 单点登录 */
+const { wsClient } = require("./helpers.js");
+const ueUrl = (start) => start.args.find((a) => a.startsWith("-PixelStreamingURL=")).split("=")[1];
+async function fakeUe(url) {
+	const ws = await wsClient(url);
+	await next(ws, type("config"));
+	return ws;
+}
+
+test("fresh instance per viewer: the instance is stopped when its viewer leaves and never handed to the next viewer", async () => {
+	const ag = await P.agent("fresh-m");
+	const r = await P.api("POST", "/api/v1/programs", { id: "fresh", exe: "D:\\UE\\fresh.exe", machines: ["fresh-m"], mode: "exclusive", max_instances: 1, fresh_instance: true });
+	assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+	assert.strictEqual(r.body.fresh_instance, true);
+	const shared = await P.api("POST", "/api/v1/programs", { id: "fresh-shared", exe: "D:\\x.exe", mode: "shared", max_viewers: 3, fresh_instance: true, enabled: false });
+	assert.strictEqual(shared.body.fresh_instance, false, "not applicable to shared mode");
+
+	const p1 = await P.player("/play/fresh", { "X-Forwarded-For": "10.2.0.1" }); // 独立来源地址：不受前面限流用例的影响
+	const s1 = await next(ag, type("start"));
+	const ue1 = await fakeUe(ueUrl(s1));
+	const c1 = await next(ue1, type("playerConnected"), 4000);
+	const p2 = await P.player("/play/fresh", { "X-Forwarded-For": "10.2.0.2" });
+	assert.strictEqual((await next(p2, type("playerqueue"))).seq, 1);
+
+	p1.close();
+	assert.ok(await next(ag, (m) => m.type === "stop" && m.instanceId === s1.instanceId, 4000), "used instance is stopped");
+	const s2 = await next(ag, type("start"), 4000);
+	assert.notStrictEqual(s2.instanceId, s1.instanceId, "a new instance is started for the next viewer");
+	assert.strictEqual((await next(ue1, type("playerDisconnected"))).playerId, c1.playerId);
+	ag.send(JSON.stringify({ type: "exited", instanceId: s1.instanceId, code: 0 }));
+	const ue2 = await fakeUe(ueUrl(s2));
+	assert.ok(await next(ue2, type("playerConnected"), 4000), "next viewer gets the fresh instance");
+	await sleep(200);
+	assert.ok(!ue1.inbox.some(type("playerConnected")), "old instance never reused");
+	for (const w of [p2, ue1, ue2, ag]) w.close();
+});
+
+test("VIP access links: queue priority, and when full the longest-playing normal viewer is preempted (4007)", async () => {
+	const ag = await P.agent("vip-m");
+	assert.strictEqual((await P.api("POST", "/api/v1/programs", { id: "vipp", exe: "D:\\UE\\vip.exe", machines: ["vip-m"], mode: "exclusive", max_instances: 1 })).status, 201);
+	const link = (await P.api("POST", "/api/v1/share-links", { programId: "vipp", vip: true, note: "VIP" })).body;
+	assert.strictEqual(link.vip, true);
+	assert.ok((await P.api("GET", "/api/v1/share-links")).body.find((l) => l.id === link.id).vip);
+
+	const n1 = await P.player("/play/vipp");
+	const s1 = await next(ag, type("start"));
+	const ue = await fakeUe(ueUrl(s1));
+	const c1 = await next(ue, type("playerConnected"), 4000);
+	const n2 = await P.player("/play/vipp", { "X-Forwarded-For": "10.1.1.2" });
+	assert.strictEqual((await next(n2, type("playerqueue"))).seq, 1);
+
+	// VIP 进入（程序未开启「需要访问链接」也生效）：满员 → 断开观看最久的普通观众 n1，VIP 立即获得实例；n2 仍在排队
+	const v = await P.player(link.path, { "X-Forwarded-For": "10.1.1.3" });
+	assert.match(await next(n1, text), /让给优先访问的用户/);
+	assert.strictEqual(await n1.closed, 4007);
+	assert.strictEqual((await next(ue, type("playerDisconnected"))).playerId, c1.playerId);
+	const cv = await next(ue, type("playerConnected"), 4000);
+	const live = (await P.api("GET", "/api/v1/sessions/live")).body;
+	assert.strictEqual(live.find((x) => x.id === cv.playerId).vip, true);
+	assert.strictEqual(live.find((x) => x.ip === "10.1.1.2").state, "queued");
+	await sleep(100);
+	const hist = (await P.api("GET", "/api/v1/sessions/history?program=vipp")).body;
+	assert.ok(hist.rows.some((x) => x.end_reason === "preempted by vip"));
+
+	// 不会抢占其他 VIP；关闭抢占时 VIP 只是排在普通观众之前
+	assert.strictEqual((await P.api("PUT", "/api/v1/programs/vipp", { vip_preempt: false })).body.vip_preempt, false);
+	const v2 = await P.player(link.path, { "X-Forwarded-For": "10.1.1.4" });
+	assert.strictEqual((await next(v2, type("playerqueue"))).seq, 1, "VIP queued ahead of normal viewers");
+	assert.strictEqual((await next(n2, (m) => m?.type === "playerqueue" && m.seq === 2, 3000)).seq, 2);
+	assert.ok(!v.inbox.some(text), "the playing VIP is not preempted");
+	for (const w of [n2, v, v2, ue, ag]) w.close();
+});
+
+test("SSO login link: API token only, one-time, short-lived, respects disabled users", async () => {
+	const tok = (await P.api("POST", "/api/v1/api-tokens", { name: "biz", role: "admin" })).body.token;
+	const op = (await P.api("POST", "/api/v1/api-tokens", { name: "biz-op", role: "operator" })).body.token;
+	const bearer = (t) => ({ headers: { Authorization: `Bearer ${t}` }, auth: false });
+	assert.strictEqual((await P.api("POST", "/api/v1/auth/sso-link", { username: "admin" })).status, 403, "browser sessions cannot mint SSO links");
+	assert.strictEqual((await P.api("POST", "/api/v1/auth/sso-link", { username: "admin" }, bearer(op))).status, 403, "admin role required");
+	const r = await P.api("POST", "/api/v1/auth/sso-link", { username: "admin", redirect: "/programs" }, bearer(tok));
+	assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+	const u = new URL(r.body.url);
+	assert.strictEqual(u.pathname, "/api/v1/auth/sso");
+	const open = (p) => P.request(P.ADMIN, "GET", p, { auth: false });
+	const res = await open(u.pathname + u.search);
+	assert.strictEqual(res.status, 302);
+	assert.strictEqual(res.headers.location, "/admin/#/programs");
+	const cookie = res.headers["set-cookie"].find((c) => c.startsWith("ps_session=")).split(";")[0];
+	const me = await P.api("GET", "/api/v1/auth/me", undefined, { headers: { Cookie: cookie }, auth: false });
+	assert.strictEqual(me.body.user.username, "admin");
+	assert.strictEqual((await open(u.pathname + u.search)).status, 403, "one-time");
+	assert.strictEqual((await open("/api/v1/auth/sso?t=bad")).status, 403);
+	assert.strictEqual((await P.request(P.PUB, "GET", u.pathname + "?t=x", { auth: false })).status, 404, "not on the viewer port");
+
+	await P.api("POST", "/api/v1/users", { username: "sso-user", role: "viewer", password: "SsoUser12345" });
+	const link2 = await P.api("POST", "/api/v1/auth/sso-link", { username: "sso-user" }, bearer(tok));
+	const id = (await P.api("GET", "/api/v1/users")).body.find((x) => x.username === "sso-user").id;
+	await P.api("PUT", `/api/v1/users/${id}`, { disabled: true });
+	const u2 = new URL(link2.body.url);
+	assert.strictEqual((await open(u2.pathname + u2.search)).status, 403, "disabled after the link was issued");
+	assert.strictEqual((await P.api("POST", "/api/v1/auth/sso-link", { username: "sso-user" }, bearer(tok))).status, 409);
+	assert.ok((await P.api("GET", "/api/v1/audit?q=sso")).body.some((a) => a.action === "auth.sso_login"));
+});

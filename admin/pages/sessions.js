@@ -47,7 +47,7 @@ function Live() {
 			columns=${[
 				{ title: "观众", render: (p) => html`<b>${p.ip}</b> ${p.external ? html`<${Badge} tone="info">外网<//>` : html`<${Badge}>内网<//>`}<div class="muted small ellipsis" title=${p.userAgent}>${p.userAgent}</div>` },
 				{ title: "程序", render: (p) => pname(p.programId) },
-				{ title: "状态", render: (p) => html`<${StateBadge} state=${p.state} />${p.state === "queued" ? html`<div class="muted small">第 ${p.queuePos} 位</div>` : ""}` },
+				{ title: "状态", render: (p) => html`<${StateBadge} state=${p.state} />${p.vip ? html` <${Badge} tone="accent" title="使用 VIP 访问链接">VIP<//>` : ""}${p.state === "queued" ? html`<div class="muted small">第 ${p.queuePos} 位</div>` : ""}` },
 				{ title: "实例", render: (p) => (p.instanceId ? html`<code>${p.instanceId}</code><div class="muted small">${p.machineId}</div>` : "-") },
 				{ title: "链路", render: (p) => linkLabel(p.qos?.transport) },
 				{ title: "码率", render: (p) => fmt.kbps(p.qos?.kbps) },

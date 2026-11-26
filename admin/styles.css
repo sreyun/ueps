@@ -288,3 +288,5 @@ ol.steps { padding-left: 20px; } ol.steps li { margin-bottom: 12px; }
 button.danger-text { color: var(--bad); }
 .modal-b h4 { margin: 14px 0 6px; font-size: 13px; }
 .modal-b h4:first-child { margin-top: 0; }
+.sso-help { margin-top: 14px; }
+.sso-help summary { cursor: pointer; color: var(--text); padding: 4px 0; }

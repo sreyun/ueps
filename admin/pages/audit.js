@@ -3,6 +3,8 @@ import { html, usePoll, api, Card, Table, fmt, useState } from "../lib.js";
 const ACTIONS = {
 	"auth.login": "登录",
 	"auth.login_failed": "登录失败",
+	"auth.sso_link": "生成单点登录链接",
+	"auth.sso_login": "单点登录",
 	"auth.logout_all": "退出所有设备",
 	"auth.change_password": "修改口令",
 	"auth.totp_enable": "开启两步验证",

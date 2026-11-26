@@ -10,7 +10,7 @@
  *
  * 本模块只维护状态并发出事件，不直接操作 WebSocket：
  *   'assigned'(player, inst)  'queued'(player, position)  'released'(player, inst)  'ueLost'(player)
- *   'rejected'(player, reason)  'changed'()  'warning'(text)
+ *   'rejected'(player, reason)  'preempted'(player)（为 VIP 让出位置）  'changed'()  'warning'(text)
  */
 const { EventEmitter } = require("events");
 const { newId, splitArgs } = require("./util.js");
@@ -140,7 +140,11 @@ class Scheduler extends EventEmitter {
 		if (!rt) return this.emit("rejected", player, "程序不存在");
 		if (!rt.def.enabled) return this.emit("rejected", player, "程序已停用");
 		player.queuedAt = Date.now();
-		rt.queue.push(player);
+		if (player.vip) {
+			// VIP 访问链接：排在所有普通观众之前（VIP 之间先到先得）
+			const i = rt.queue.findIndex((q) => !q.vip);
+			rt.queue.splice(i < 0 ? rt.queue.length : i, 0, player);
+		} else rt.queue.push(player);
 		this.dispatch(rt);
 	}
 
@@ -156,39 +160,86 @@ class Scheduler extends EventEmitter {
 			player.instance = null;
 			this.emit("released", player, inst, reason);
 			if (inst.viewers.size === 0 && SERVING.has(inst.state)) {
-				inst.state = "idle";
-				inst.idleSince = Date.now();
-				if (inst.draining) this.stopInstance(inst.id, "drained");
+				if (rt?.def.fresh_instance && inst.managed && !inst.draining) {
+					// 每位观众使用全新实例：观众离开即关闭，不把用过的 UE（场景状态、登录信息等）交给下一位观众
+					this.stopInstance(inst.id, "viewer left (fresh instance)");
+				} else {
+					inst.state = "idle";
+					inst.idleSince = Date.now();
+					if (inst.draining) this.stopInstance(inst.id, "drained");
+				}
 			}
 		}
 		if (rt) this.dispatch(rt);
 		this.emit("changed");
 	}
 
-	/** 把排队观众分配到可用实例（按 pickInstance 的负载均衡顺序） */
+	/** 把排队观众分配到可用实例（按 pickInstance 的负载均衡顺序）；VIP 观众等不到实例时可抢占 */
 	dispatch(rt) {
+		this.assign(rt);
+		this.scale(rt);
+		if (rt.queue[0]?.vip && rt.def.vip_preempt !== false && this.preemptForVip(rt)) this.assign(rt);
+		if (rt.queue.length) this.notifyQueue(rt);
+		this.emit("changed");
+	}
+
+	assign(rt) {
 		const cap = this.capacity(rt.def);
 		while (rt.queue.length) {
 			const inst = this.pickInstance(rt.def.id, cap);
 			if (!inst) break;
 			const p = rt.queue.shift();
 			inst.viewers.add(p);
+			inst.used = true;
 			p.instance = inst;
 			p.queuePos = 0;
+			p.assignedAt = Date.now();
 			inst.state = "busy";
 			inst.idleSince = null;
 			this.emit("assigned", p, inst);
 		}
-		if (rt.queue.length) this.notifyQueue(rt);
-		this.scale(rt);
-		this.emit("changed");
+	}
+
+	/**
+	 * VIP 观众排在队首、又没有即将可用的实例（启动中实例的空位）时，断开一位观看时间最长的普通观众，把位置让给 VIP。
+	 * 每位 VIP 最多触发一次（被让出的位置可能还要等实例重新启动），不会断开其他 VIP。返回是否断开了观众。
+	 */
+	preemptForVip(rt) {
+		const cap = this.capacity(rt.def);
+		const insts = this.instancesOf(rt.def.id).filter((i) => ACTIVE.has(i.state) && !i.draining);
+		let coming = insts.filter((i) => !i.ueReady).reduce((s, i) => s + Math.max(0, cap - i.viewers.size), 0);
+		let evicted = 0;
+		for (const vip of [...rt.queue]) {
+			if (!vip.vip) break; // VIP 都排在队首
+			if (vip.instance || vip.closed || !rt.queue.includes(vip)) continue; // 已在下面的 leave() → dispatch 中分配到实例
+			if (coming > 0) {
+				coming--;
+				continue;
+			}
+			if (vip.preemptDone) continue;
+			let victim = null;
+			for (const inst of insts) {
+				if (!inst.ueReady || !SERVING.has(inst.state)) continue;
+				for (const p of inst.viewers) if (!p.vip && !p.preempted && (!victim || (p.assignedAt || 0) < (victim.assignedAt || 0))) victim = p;
+			}
+			if (!victim) break;
+			vip.preemptDone = true;
+			victim.preempted = true;
+			this.log.info(`[scheduler] 程序 ${rt.def.id} 已满，为 VIP 观众让出位置：断开观众 ${victim.id}（${victim.ip || ""}，已观看 ${Math.round((Date.now() - (victim.assignedAt || Date.now())) / 1000)} 秒）`);
+			this.emit("preempted", victim);
+			this.leave(victim, "preempted by vip");
+			evicted++;
+		}
+		return evicted > 0;
 	}
 
 	pickInstance(programId, cap) {
+		const fresh = this.programs.get(programId)?.def.fresh_instance;
 		let best = null;
 		for (const inst of this.byProgram.get(programId) || []) {
 			if (!SERVING.has(inst.state) || inst.draining || !inst.ueReady) continue;
 			if (inst.viewers.size >= cap) continue;
+			if (fresh && inst.managed && inst.used) continue; // 用过的实例正在关闭，不再分配
 			if (!best || inst.viewers.size < best.viewers.size || (inst.viewers.size === best.viewers.size && inst.readyAt < best.readyAt)) best = inst;
 		}
 		return best;

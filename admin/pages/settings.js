@@ -219,6 +219,12 @@ function ApiTokens() {
 				{ title: "", class: "actions", render: (t) => !t.revoked && html`<button class="danger sm" onClick=${() => revoke(t)}>吊销</button>` },
 			]}
 		/>
+		<details class="small sso-help">
+			<summary>单点登录：业务系统中的用户免登录进入管理端</summary>
+			<p class="muted">业务系统后台用<b>管理员</b>角色的令牌为指定用户生成一次性登录链接（默认 60 秒内有效、只能用一次），再让用户的浏览器打开该链接即可直接进入管理端（不再输入口令与两步验证，由业务系统负责认证）。用户须事先在「用户」中创建，权限按其角色。</p>
+			<pre class="code">${`curl -X POST -H "Authorization: Bearer <管理员令牌>" -H "Content-Type: application/json" \\\n  ${location.origin}/api/v1/auth/sso-link -d '{"username":"zhangsan","redirect":"/programs"}'\n# 返回 {"url":"${location.origin}/api/v1/auth/sso?t=…","expiresAt":…}`}</pre>
+			<p class="muted">可选参数：<code>ttl</code>（有效秒数，10-600）、<code>redirect</code>（进入后打开的页面，如 <code>/programs</code>、<code>/sessions</code>）、<code>base</code>（浏览器访问管理端的地址，默认取调用接口时的地址）。</p>
+		</details>
 		${creating &&
 		html`<${TokenModal}
 			onClose=${() => setCreating(false)}

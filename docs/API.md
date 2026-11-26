@@ -23,6 +23,8 @@ curl -H "Authorization: Bearer $TOKEN" http://192.168.1.10:88/api/v1/overview
 |---|---|---|---|
 | POST | `/auth/login` | 公开 | `{username,password,code?}`；开启两步验证时先返回 401 `{totpRequired:true}` |
 | POST | `/auth/logout` · `/auth/logout-all` | viewer | 退出 / 让本人所有设备登录失效 |
+| POST | `/auth/sso-link` | admin（**只能用 API 令牌**） | 单点登录：`{username \| userId, redirect?, ttl?, base?}` → `{url, username, expiresAt}`，见下方示例 |
+| GET | `/auth/sso?t=…` | 公开（管理口、管理网段） | 打开单点登录链接：登录为该用户并跳转到管理端（一次性；用户被禁用或已被强制下线时失效） |
 | GET | `/auth/me` | viewer | 当前用户、版本、对外访问地址 publicBaseUrl |
 | POST | `/auth/password` | viewer | `{oldPassword,newPassword}` |
 | POST | `/auth/totp/setup` · `/auth/totp/enable` · `/auth/totp/disable` | viewer | 两步验证 |
@@ -46,7 +48,7 @@ curl -H "Authorization: Bearer $TOKEN" http://192.168.1.10:88/api/v1/overview
 | GET | `/sessions/history?program=&from=&to=&ip=&limit=&offset=` | viewer | 会话历史 |
 | GET | `/sessions/export?program=&from=&to=&ip=` | viewer | 导出会话 CSV（UTF-8 BOM，Excel 可直接打开，最多 10 万条） |
 | GET | `/sessions/stats?days=7` | viewer | 按程序统计会话数与时长 |
-| GET/POST | `/share-links` | viewer / operator | 访问链接 `{programId,hours,maxUses,note}`，返回 `path` |
+| GET/POST | `/share-links` | viewer / operator | 访问链接 `{programId,hours,maxUses,note,vip?}`，返回 `path`；`vip:true` 为 VIP 链接（排队优先，满员时可抢占，见程序字段 `vip_preempt`） |
 | POST | `/share-links/:id/url` | operator | 重新获取已有链接的地址（令牌按原有效期重新签发） |
 | POST | `/share-links/:id/revoke` | operator | 作废 |
 | GET/POST/PUT/DELETE | `/users`、`/users/:id`、`/users/:id/logout` | admin | 用户管理 |
@@ -91,6 +93,8 @@ curl -H "Authorization: Bearer $TOKEN" http://192.168.1.10:88/api/v1/overview
 | `require_token` `public` `enabled` | 需要访问链接、出现在门户、启用 |
 | `allow_ips` `one_session_per_ip` `inactive_release_sec` `hide_cursor` | 观众 IP 白名单、同 IP 单会话、无操作断开、隐藏鼠标 |
 | `allow_commands` | 允许观众执行 UE 控制台命令（默认 false，有安全风险） |
+| `fresh_instance` | 每位观众使用全新实例：观众离开后立即关闭其实例、不交给下一位（仅独占模式，默认 false；企业版 `UserExitKillUe`） |
+| `vip_preempt` | VIP 链接满员时抢占：没有可用实例时断开观看时间最长的普通观众，把位置让给 VIP（默认 true；false = VIP 只优先排队；企业版 `vipAccess`） |
 
 示例：
 
@@ -100,7 +104,22 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
 # 生成 24 小时有效、最多 50 人使用的访问链接
 curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" http://192.168.1.10:88/api/v1/share-links \
   -d '{"programId":"factory","hours":24,"maxUses":50,"note":"客户演示"}'
+# VIP 链接（排队优先；满员时让出普通观众的位置）
+curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" http://192.168.1.10:88/api/v1/share-links \
+  -d '{"programId":"factory","hours":2,"vip":true,"note":"领导参观"}'
 ```
+
+单点登录（业务系统中的用户免登录进入管理端）：业务系统后台用**管理员角色**的 API 令牌生成一次性链接，再让用户的浏览器打开：
+
+```bash
+curl -X POST -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" http://192.168.1.10:88/api/v1/auth/sso-link \
+  -d '{"username":"zhangsan","redirect":"/programs"}'
+# → {"url":"http://192.168.1.10:88/api/v1/auth/sso?t=…","username":"zhangsan","expiresAt":…}
+```
+
+- 用户须先在「用户」中创建；登录后权限按其角色。打开链接时不再要求口令与两步验证（由业务系统负责认证），因此生成链接只允许管理员令牌，浏览器会话不能调用。
+- `ttl` 有效秒数（10-600，默认 60），链接只能使用一次；`redirect` 进入后打开的页面（如 `/programs`、`/sessions`）；`base` 浏览器访问管理端的地址（默认取调用接口时使用的地址，业务系统经内网别名调用时需指定）。
+- 打开链接的浏览器同样须在管理网段（`security.adminAllow`）内。生成与使用均记入审计日志。
 
 ## 4. 播放页嵌入与 SDK
 
@@ -119,4 +138,5 @@ curl -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/jso
 | 4004 | 未找到对应程序 |
 | 4005 | 同一 IP 打开了新的会话 |
 | 4006 | 来源 IP 不在白名单 |
+| 4007 | 程序满员，位置让给了 VIP 访问链接的观众 |
 | 1008 | 信令消息洪泛 |

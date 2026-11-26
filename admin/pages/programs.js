@@ -32,6 +32,8 @@ const EMPTY = {
 	hide_cursor: false,
 	allow_commands: false,
 	prewarm_hours: "",
+	fresh_instance: false,
+	vip_preempt: true,
 };
 
 export function Programs() {
@@ -67,7 +69,7 @@ export function Programs() {
 							${p.require_token ? html` <${Badge} tone="warn" title="观众需要访问链接">需链接<//>` : ""}
 							${p.allow_commands ? html` <${Badge} tone="bad" title="观众可执行 UE 控制台命令">命令开放<//>` : ""}`,
 					},
-					{ title: "模式", render: (p) => (p.mode === "shared" ? `共享 · 每实例 ${p.max_viewers} 人` : "独占 · 一人一实例") },
+					{ title: "模式", render: (p) => (p.mode === "shared" ? `共享 · 每实例 ${p.max_viewers} 人` : `独占 · 一人一实例${p.fresh_instance ? " · 用后即关" : ""}`) },
 					{ title: "实例", render: (p) => html`${p.runtime?.instances.total ?? 0} / ${p.max_instances}<div class="muted small">预热 ${p.prewarm}${p.prewarm_hours ? `（${p.prewarm_hours} 时）` : ""}</div>` },
 					{ title: "观众", render: (p) => html`${p.runtime?.viewers ?? 0}${p.runtime?.queue ? html` <${Badge} tone="warn">排队 ${p.runtime.queue}<//>` : ""}` },
 					{ title: "启动方式", class: "wrap", render: (p) => (p.exe ? html`<code class="small">${p.exe}</code>` : html`<span class="muted">接入手动启动的 UE</span>`) },
@@ -222,9 +224,11 @@ function Editor({ initial, machines, onClose, onSaved }) {
 				<${Field} label="最大实例数" hint="该程序同时运行的实例上限"><input ...${bind("max_instances", "number")} min="0" /><//>
 				<${Field} label="预热实例数" hint="常备空闲实例，观众秒进；不超过最大实例数"><input ...${bind("prewarm", "number")} min="0" /><//>
 				<${Field} label="预热时段" hint='例如 "8-20" 表示 8 点到 20 点预热；空 = 全天'><input ...${bind("prewarm_hours")} placeholder="全天" /><//>
-				<${Field} label="空闲释放（秒）" hint="实例无观众超过该时间自动关闭（预热实例除外）"><input ...${bind("idle_release_sec", "number")} min="0" /><//>
+				<${Field} label="空闲释放（秒）" hint=${v.fresh_instance ? "开启「每位观众使用全新实例」后，用过的实例在观众离开时立即关闭；这里只作用于未被使用的实例" : "实例无观众超过该时间自动关闭（预热实例除外）"}><input ...${bind("idle_release_sec", "number")} min="0" /><//>
 				<${Field} label="启动超时（秒）" hint="UE 启动后多久内必须连上平台，超时换 GPU 重试"><input ...${bind("startup_timeout_sec", "number")} min="10" /><//>
 				<${Field} label="估算显存 (MB)" hint="放置实例时检查剩余显存；0 = 不检查"><input ...${bind("gpu_mem_mb", "number")} min="0" /><//>
+				${v.mode !== "shared" &&
+				html`<label class="check"><input type="checkbox" ...${bind("fresh_instance", "checkbox")} /> 每位观众使用全新实例：观众离开后立即关闭其实例，不再交给下一位观众（避免上一位观众的场景状态、登录信息残留）。新观众需等待实例启动，建议同时设置预热实例数</label>`}
 				<${Field} label="允许运行的机器" hint="不选 = 所有在线机器" class="full">
 					<div class="chips">
 						${machines.length
@@ -236,6 +240,7 @@ function Editor({ initial, machines, onClose, onSaved }) {
 			${tab === "access" &&
 			html`<div class="form-grid">
 				<label class="check"><input type="checkbox" ...${bind("require_token", "checkbox")} /> 需要访问链接：观众必须使用「访问链接」页面生成的带令牌地址（可设有效期与次数）</label>
+				<label class="check"><input type="checkbox" ...${bind("vip_preempt", "checkbox")} /> VIP 链接满员时抢占：使用 VIP 访问链接的观众总是排在最前；没有可用实例时，断开观看时间最长的普通观众把位置让给 VIP（不勾选则只优先排队）</label>
 				<label class="check"><input type="checkbox" ...${bind("one_session_per_ip", "checkbox")} /> 同一 IP 只保留最新会话：新页面打开时断开旧页面（企业 NAT 下多人共用 IP 时不要开启）</label>
 				<label class="check"><input type="checkbox" ...${bind("hide_cursor", "checkbox")} /> 播放页隐藏鼠标指针（UE 内自绘光标时使用）</label>
 				<label class="check"><input type="checkbox" ...${bind("allow_commands", "checkbox")} /> 允许观众执行 UE 控制台命令 <span class="text-bad small">（-AllowPixelStreamingCommands：任何观众都能执行 quit 等命令，仅在可信内网开启）</span></label>

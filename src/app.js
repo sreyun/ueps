@@ -28,7 +28,7 @@ const { firstLanIPv4, ipInList, randomSecret, throttle } = require("./util.js");
 const { createAgent } = require("../agent/agent.js");
 const { AgentPackages, configSection } = require("./downloads.js");
 
-const VERSION = "1.3.2";
+const VERSION = "1.4.0";
 
 function createApp({ config, assetsDir, log, selfCommand, env = process.env }) {
 	log = log || createLogger({ level: config.log.level, dir: config.log.file ? path.join(config.dataDir, "logs") : null, retentionDays: config.log.retentionDays });
@@ -370,6 +370,7 @@ function createApp({ config, assetsDir, log, selfCommand, env = process.env }) {
 			if (!req.user) return sendJson(res, 401, { error: "未登录、登录已过期或 API 令牌无效" });
 			if (!hasRole(req.user.role, route.opts.role || "admin")) return sendJson(res, 403, { error: "权限不足" });
 			if (req.user.token && route.opts.noToken) return sendJson(res, 403, { error: "该接口不允许使用 API 令牌调用" });
+			if (!req.user.token && route.opts.tokenOnly) return sendJson(res, 403, { error: "该接口只允许业务系统使用 API 令牌调用" });
 		}
 		// CSRF：基于 Cookie 的写操作必须带自定义头（跨站表单/图片无法附带）；Bearer 令牌不受 CSRF 影响
 		const viaToken = String(req.headers.authorization || "").startsWith("Bearer ");

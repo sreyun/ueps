@@ -174,18 +174,26 @@ class Signaling {
 		return null;
 	}
 
+	/**
+	 * 访问链接校验。程序未开启「需要访问链接」时，带有效链接的观众同样记录来源（用于统计）并识别 VIP；链接无效则按普通观众处理。
+	 */
 	checkToken(req, program, info) {
-		if (!program.require_token) return { ok: true };
-		if (this.adminFromReq(req) && !info.isPublic) return { ok: true, admin: true };
 		const token = new URL(req.url, "http://x").searchParams.get("token");
-		const c = token ? verifyJwt(token, this.secrets.jwt) : null;
+		const r = token ? this.verifyShare(token, program, info) : { ok: false, reason: "需要有效的访问链接" };
+		if (r.ok || !program.require_token) return r.ok ? r : { ok: true };
+		if (this.adminFromReq(req) && !info.isPublic) return { ok: true, admin: true };
+		return r;
+	}
+
+	verifyShare(token, program, info) {
+		const c = verifyJwt(token, this.secrets.jwt);
 		if (!c || c.typ !== "share") return { ok: false, reason: "需要有效的访问链接" };
 		if (c.pid !== program.id) return { ok: false, reason: "访问链接与程序不匹配" };
 		const link = this.store.getShareLink(c.lid);
 		if (!link || link.revoked) return { ok: false, reason: "访问链接已失效" };
 		if (link.expires_at && link.expires_at < Date.now()) return { ok: false, reason: "访问链接已过期" };
 		let seen = this.linkSeen.get(link.id);
-		if (seen?.has(info.ip)) return { ok: true, linkId: link.id };
+		if (seen?.has(info.ip)) return { ok: true, linkId: link.id, vip: link.vip };
 		if (link.max_uses && link.uses >= link.max_uses) return { ok: false, reason: "访问链接使用次数已用完" };
 		this.store.useShareLink(link.id);
 		if (!seen) {
@@ -193,7 +201,7 @@ class Signaling {
 			this.linkSeen.set(link.id, (seen = new Set()));
 		}
 		if (seen.size < 10000) seen.add(info.ip);
-		return { ok: true, linkId: link.id };
+		return { ok: true, linkId: link.id, vip: link.vip };
 	}
 
 	onPlayer(ws, req, info) {
@@ -239,6 +247,7 @@ class Signaling {
 			return ws.close(4003, "token required");
 		}
 		p.linkId = tok.linkId || null;
+		p.vip = !!tok.vip;
 		// 同一 IP 只保留最新会话（企业版 strictMatchIP 的等价功能）
 		if (rt.def.one_session_per_ip) {
 			for (const old of this.players.values()) {
@@ -364,6 +373,12 @@ class Signaling {
 		s.on("ueLost", (p, inst) => {
 			safeSend(p.ws, { type: "ueDisConnected" });
 			this.endSession(p, inst, "ue lost");
+		});
+		s.on("preempted", (p) => {
+			safeSend(p.ws, "! 当前访问人数已满，您的位置已让给优先访问的用户，可稍后重新进入");
+			try {
+				p.ws.close(4007, "preempted");
+			} catch {}
 		});
 		s.on("rejected", (p, reason) => {
 			safeSend(p.ws, `! ${reason}`);
@@ -508,6 +523,7 @@ class Signaling {
 			machineId: p.instance?.machineId || null,
 			state: p.instance ? "playing" : "queued",
 			queuePos: p.instance ? 0 : p.queuePos,
+			vip: !!p.vip,
 			ip: p.ip,
 			external: p.external,
 			userAgent: p.userAgent,

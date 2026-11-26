@@ -43,10 +43,10 @@ flowchart TB
 | | |
 |---|---|
 | **零 UDP 映射** | TURN over TCP/TLS 与网页同端口多路复用；同一端口同时支持 `http://` 与 `https://`；前面还有一层反向代理（路由器、OpenResty、CDN）时也能用（见安装手册 8.1） |
-| **按需调度** | 独占（一人一实例）/ 共享（多人同看）；预热（可按时段）、空闲回收、排队、失败自动换 GPU / 机器重试、排空；按 GPU 显存 / 利用率放置，支持手动定义 GPU |
+| **按需调度** | 独占（一人一实例）/ 共享（多人同看）；预热（可按时段）、空闲回收、排队、失败自动换 GPU / 机器重试、排空、每位观众使用全新实例（用后即关）；VIP 访问链接（排队优先，满员时抢占）；按 GPU 显存 / 利用率放置，支持手动定义 GPU |
 | **渲染机一键接入** | Windows 10/11 图形安装程序（复制安装链接 → 双击「下一步」，默认作为 Windows 服务开机运行，可修改 / 升级 / 卸载 / 静默批量部署）；Linux 一条命令 |
 | **稳定** | 平台或 Agent 重启后自动接管仍在运行的 UE（不重复拉起、不留孤儿进程）；僵尸 UE 重连被拒；心跳检测；TURN 子进程守护；Agent 守护进程自动重启 |
-| **安全** | 管理端 / UE / Agent 只在内网口，观众口与管理口分离；scrypt 口令、两步验证、会话吊销、登录锁定、CSRF 防护、API 令牌、访问链接、IP 白名单、限流、审计；Agent 可执行文件目录白名单、参数数组启动（无 shell 注入） |
+| **安全** | 管理端 / UE / Agent 只在内网口，观众口与管理口分离；scrypt 口令、两步验证、会话吊销、登录锁定、CSRF 防护、API 令牌、单点登录（业务系统一次性登录链接）、访问链接、IP 白名单、限流、审计；Agent 可执行文件目录白名单、参数数组启动（无 shell 注入） |
 | **好用** | Web 管理端（首次使用引导、概览、程序与访问〔一键复制播放地址 / 嵌入代码〕、实例、渲染机 / GPU、观众会话与质量〔CSV 导出〕、访问链接、用户、设置、日志、审计；适配手机）；告警（企业微信 / 钉钉 / 飞书 / Webhook）、Prometheus 指标、备份恢复、自定义网页托管、企业版兼容接口（寻路、坐标转换） |
 | **性能** | 1000 并发观众 p99 ≈ 300ms 拿到画面协商，平台内存约 120MB（安装手册第 12 节） |
 | **部署** | 单文件可执行程序（Windows / Linux，无需安装 Node.js）、docker-compose、华为云 SWR 预构建镜像（amd64 / arm64）；兼容 UE4.27 / UE5 像素流 1 / UE5.5 像素流 2 |
@@ -63,7 +63,7 @@ flowchart TB
 | `ps-platform-agent-<版本>-linux-x64` | 渲染机 · Linux Agent 程序 |
 | `SHA256SUMS.txt` | 校验和 |
 
-Docker 镜像：`swr.cn-east-3.myhuaweicloud.com/sreyun/ps-platform:<版本>`（标签 `1.3.2` / `1.3` / `1` / `latest`）。
+Docker 镜像：`swr.cn-east-3.myhuaweicloud.com/sreyun/ps-platform:<版本>`（标签 `1.4.0` / `1.4` / `1` / `latest`）。
 
 ## 快速开始
 
@@ -72,7 +72,7 @@ Docker 镜像：`swr.cn-east-3.myhuaweicloud.com/sreyun/ps-platform:<版本>`（
 ```bash
 cd deploy && cp .env.example .env && vi .env     # 至少填写 LAN_IP、UE_SUBNETS；建议填写 PS_ADMIN_PASSWORD、PS_AGENT_TOKEN、TURN_SECRET
 mkdir -p certs                                   # 可选：放入 fullchain.pem / privkey.pem 启用 https；没有证书时以仅 http 模式运行
-docker compose up -d --build                     # 或在 .env 设置 PS_IMAGE=swr.cn-east-3.myhuaweicloud.com/sreyun/ps-platform:1.3.2 后：
+docker compose up -d --build                     # 或在 .env 设置 PS_IMAGE=swr.cn-east-3.myhuaweicloud.com/sreyun/ps-platform:1.4.0 后：
                                                  #   docker compose pull platform && docker compose up -d --no-build
 docker compose ps                                # platform、nginx 均为 healthy
 ```
@@ -168,7 +168,7 @@ curl -fL -o ps-platform http://<网关>:88/download/agent/linux && chmod +x ps-p
 | `release.yml` | 推送 `v*` 标签 | 校验版本号 → 测试 → Windows / Linux 打包与冒烟测试 → 上传到 GitHub Release |
 | `docker.yml` | 推送 `v*` 标签 | 构建 amd64 + arm64 镜像，自检后推送华为云 SWR（需配置 `HW_ACCESS_KEY` / `HW_SECRET_KEY`） |
 
-发布新版本：修改 `package.json` 与 `src/app.js` 中的版本号，在 `CHANGELOG.md` 增加对应一节，推送 main 后打标签 `git tag -a v1.3.2 -m "ps-platform 1.3.2" && git push origin v1.3.2`。详见安装手册第 13 节。
+发布新版本：修改 `package.json` 与 `src/app.js` 中的版本号，在 `CHANGELOG.md` 增加对应一节，推送 main 后打标签 `git tag -a v1.4.0 -m "ps-platform 1.4.0" && git push origin v1.4.0`。详见安装手册第 13 节。
 
 ## 开发
 

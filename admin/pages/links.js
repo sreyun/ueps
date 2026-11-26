@@ -23,7 +23,7 @@ export function Links() {
 	return html`
 		<${Card}
 			title="访问链接"
-			sub="程序开启「需要访问链接」后，观众必须使用这里生成的链接；可设置有效期与可用次数，随时作废。"
+			sub="程序开启「需要访问链接」后，观众必须使用这里生成的链接；可设置有效期与可用次数，随时作废。VIP 链接的观众排队优先。"
 			extra=${html`<label class="check small"><input type="checkbox" checked=${onlyValid} onChange=${(e) => setOnlyValid(e.target.checked)} />只看有效</label>
 				${can("operator") && html`<button class="primary" disabled=${!programs.length} onClick=${() => setCreating(true)}>＋ 生成链接</button>`}`}
 		>
@@ -34,7 +34,7 @@ export function Links() {
 				empty=${html`<${Empty} action=${can("operator") && programs.length > 0 && html`<button class="primary" onClick=${() => setCreating(true)}>生成链接</button>`}>${onlyValid && list.data?.length ? "没有有效的链接（取消勾选「只看有效」查看全部）" : "还没有生成过链接"}<//>`}
 				columns=${[
 					{ title: "程序", render: (l) => html`${pname(l.program_id)}<div class="muted small">${l.program_id}</div>` },
-					{ title: "备注", class: "wrap", render: (l) => l.note || html`<span class="muted">—</span>` },
+					{ title: "备注", class: "wrap", render: (l) => html`${l.vip ? html`<${Badge} tone="accent" title="排队优先；程序开启「VIP 链接满员时抢占」时可让出普通观众的位置">VIP<//> ` : ""}${l.note || (l.vip ? "" : html`<span class="muted">—</span>`)}` },
 					{ title: "状态", render: (l) => html`<${Badge} tone=${STATE[linkState(l)][0]}>${STATE[linkState(l)][1]}<//>` },
 					{ title: "使用", render: (l) => `${l.uses}${l.max_uses ? ` / ${l.max_uses}` : ""}` },
 					{ title: "到期", render: (l) => (l.expires_at ? fmt.time(l.expires_at) : "永不过期") },
@@ -84,9 +84,10 @@ function CreateModal({ programs, onClose, onCreated }) {
 	const [hours, setHours] = useState(24);
 	const [maxUses, setMaxUses] = useState(0);
 	const [note, setNote] = useState("");
+	const [vip, setVip] = useState(false);
 	const prog = programs.find((p) => p.id === programId);
 	const submit = async () => {
-		const l = await run(() => api("POST", "/share-links", { programId, hours: Math.max(0, +hours || 0), maxUses: Math.max(0, Math.floor(+maxUses) || 0), note: note.trim() }));
+		const l = await run(() => api("POST", "/share-links", { programId, hours: Math.max(0, +hours || 0), maxUses: Math.max(0, Math.floor(+maxUses) || 0), note: note.trim(), vip }));
 		if (l?.path) onCreated(l);
 	};
 	return html`<${Modal} title="生成访问链接" onClose=${onClose} footer=${html`<button class="ghost" onClick=${onClose}>取消</button><${AsyncButton} class="primary" onClick=${submit} disabled=${!programId}>生成<//>`}>
@@ -98,5 +99,6 @@ function CreateModal({ programs, onClose, onCreated }) {
 			<${Field} label="可用人数" hint="0 = 不限；同一观众刷新不计"><input type="number" min="0" value=${maxUses} onInput=${(e) => setMaxUses(e.target.value)} /><//>
 		</div>
 		<${Field} label="备注"><input value=${note} maxlength="200" onInput=${(e) => setNote(e.target.value)} placeholder="例如 某客户演示" /><//>
+		<label class="check"><input type="checkbox" checked=${vip} onChange=${(e) => setVip(e.target.checked)} /> VIP 链接：使用该链接的观众排队优先；程序满员时可断开观看时间最长的普通观众让出位置（取决于程序的「VIP 链接满员时抢占」设置）</label>
 	<//>`;
 }

@@ -101,6 +101,8 @@ const MIGRATIONS = [
 		last_used_at INTEGER,
 		revoked INTEGER NOT NULL DEFAULT 0
 	);`,
+	// VIP 访问链接：排队优先；程序满员时可让出观看时间最长的普通观众的位置（程序 vip_preempt）
+	`ALTER TABLE share_links ADD COLUMN vip INTEGER NOT NULL DEFAULT 0;`,
 ];
 
 const PROGRAM_DEFAULTS = {
@@ -134,6 +136,8 @@ const PROGRAM_DEFAULTS = {
 	hide_cursor: false, // 播放页隐藏鼠标指针
 	allow_commands: false, // 允许观众通过数据通道执行 UE 控制台命令（-AllowPixelStreamingCommands）。有安全风险，默认关闭
 	prewarm_hours: "", // 预热时段，例如 "8-20"（空 = 全天）
+	fresh_instance: false, // 每位观众使用全新实例：观众离开后立即关闭其实例、不再分配给下一位（仅独占模式；企业版 UserExitKillUe）
+	vip_preempt: true, // 使用 VIP 访问链接的观众在程序满员时，断开观看时间最长的普通观众让出位置（企业版 vipAccess）
 };
 
 const PROGRAM_ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/;
@@ -174,6 +178,8 @@ function normalizeProgram(input, existing = {}) {
 	p.one_session_per_ip = !!p.one_session_per_ip;
 	p.hide_cursor = !!p.hide_cursor;
 	p.allow_commands = !!p.allow_commands;
+	p.fresh_instance = p.mode === "exclusive" && !!p.fresh_instance; // 共享模式下多位观众同时使用一个实例，不适用
+	p.vip_preempt = !!p.vip_preempt;
 	p.require_token = !!p.require_token;
 	p.public = !!p.public;
 	p.enabled = !!p.enabled;
@@ -420,24 +426,25 @@ class Store {
 	}
 
 	/* ----------------------------------------------------------- share links */
-	createShareLink({ id, program_id, note, expires_at, max_uses, created_by }) {
-		this.q("INSERT INTO share_links (id, program_id, note, expires_at, max_uses, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+	createShareLink({ id, program_id, note, expires_at, max_uses, created_by, vip = false }) {
+		this.q("INSERT INTO share_links (id, program_id, note, expires_at, max_uses, created_by, created_at, vip) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
 			id,
 			program_id,
 			note || "",
 			expires_at || null,
 			max_uses || 0,
 			created_by || "",
-			Date.now()
+			Date.now(),
+			+!!vip
 		);
 		return this.getShareLink(id);
 	}
 	getShareLink(id) {
 		const r = this.q("SELECT * FROM share_links WHERE id = ?").get(id);
-		return r ? { ...r, revoked: !!r.revoked } : null;
+		return r ? rowLink(r) : null;
 	}
 	listShareLinks() {
-		return this.q("SELECT * FROM share_links ORDER BY created_at DESC LIMIT 500").all().map((r) => ({ ...r, revoked: !!r.revoked }));
+		return this.q("SELECT * FROM share_links ORDER BY created_at DESC LIMIT 500").all().map(rowLink);
 	}
 	useShareLink(id) {
 		this.q("UPDATE share_links SET uses = uses + 1 WHERE id = ?").run(id);
@@ -509,6 +516,9 @@ function rowUser(r, withHash = false) {
 		u.totp_secret = r.totp_secret || null;
 	}
 	return u;
+}
+function rowLink(r) {
+	return { ...r, revoked: !!r.revoked, vip: !!r.vip };
 }
 function rowProgram(r) {
 	return { id: r.id, ...PROGRAM_DEFAULTS, ...JSON.parse(r.data), created_at: r.created_at, updated_at: r.updated_at };
