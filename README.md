@@ -63,7 +63,7 @@ flowchart TB
 | `ps-platform-agent-<版本>-linux-x64` | 渲染机 · Linux Agent 程序 |
 | `SHA256SUMS.txt` | 校验和 |
 
-Docker 镜像：`swr.cn-east-3.myhuaweicloud.com/sreyun/ps-platform:<版本>`（标签 `1.3.1` / `1.3` / `1` / `latest`）。
+Docker 镜像：`swr.cn-east-3.myhuaweicloud.com/sreyun/ps-platform:<版本>`（标签 `1.3.2` / `1.3` / `1` / `latest`）。
 
 ## 快速开始
 
@@ -72,7 +72,7 @@ Docker 镜像：`swr.cn-east-3.myhuaweicloud.com/sreyun/ps-platform:<版本>`（
 ```bash
 cd deploy && cp .env.example .env && vi .env     # 至少填写 LAN_IP、UE_SUBNETS；建议填写 PS_ADMIN_PASSWORD、PS_AGENT_TOKEN、TURN_SECRET
 mkdir -p certs                                   # 可选：放入 fullchain.pem / privkey.pem 启用 https；没有证书时以仅 http 模式运行
-docker compose up -d --build                     # 或在 .env 设置 PS_IMAGE=swr.cn-east-3.myhuaweicloud.com/sreyun/ps-platform:1.3.1 后：
+docker compose up -d --build                     # 或在 .env 设置 PS_IMAGE=swr.cn-east-3.myhuaweicloud.com/sreyun/ps-platform:1.3.2 后：
                                                  #   docker compose pull platform && docker compose up -d --no-build
 docker compose ps                                # platform、nginx 均为 healthy
 ```
@@ -168,7 +168,7 @@ curl -fL -o ps-platform http://<网关>:88/download/agent/linux && chmod +x ps-p
 | `release.yml` | 推送 `v*` 标签 | 校验版本号 → 测试 → Windows / Linux 打包与冒烟测试 → 上传到 GitHub Release |
 | `docker.yml` | 推送 `v*` 标签 | 构建 amd64 + arm64 镜像，自检后推送华为云 SWR（需配置 `HW_ACCESS_KEY` / `HW_SECRET_KEY`） |
 
-发布新版本：修改 `package.json` 与 `src/app.js` 中的版本号，在 `CHANGELOG.md` 增加对应一节，推送 main 后打标签 `git tag -a v1.3.1 -m "ps-platform 1.3.1" && git push origin v1.3.1`。详见安装手册第 13 节。
+发布新版本：修改 `package.json` 与 `src/app.js` 中的版本号，在 `CHANGELOG.md` 增加对应一节，推送 main 后打标签 `git tag -a v1.3.2 -m "ps-platform 1.3.2" && git push origin v1.3.2`。详见安装手册第 13 节。
 
 ## 开发
 

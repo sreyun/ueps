@@ -127,6 +127,12 @@ class Signaling {
 				this.log.warn(`[signal] Agent 令牌错误，来自 ${info.ip}`);
 				return reject(401, "Unauthorized");
 			}
+			const machineId = this.agents.machineIdFor(url.searchParams.get("id"), info.ip);
+			const holder = this.agents.conflictFor(machineId, info.ip);
+			if (holder) {
+				this.agents.reportConflict({ machineId, ip: info.ip }, holder);
+				return reject(409, "Conflict");
+			}
 			return this.AGENT.handleUpgrade(req, socket, head, (ws) => this.agents.attachWs(ws, { id: url.searchParams.get("id"), ip: info.ip, ueHost: req.headers.host }));
 		}
 		if (protocols.includes("exec-ue")) {

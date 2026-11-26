@@ -6,6 +6,8 @@
 const { EventEmitter } = require("events");
 const { normalizeIp } = require("./util.js");
 
+const DUPLICATE_STALE_MS = 15 * 1000; // Agent 每 5 秒上报一次：超过 15 秒没有上报的旧连接视为已失效
+
 class AgentHub extends EventEmitter {
 	constructor({ store, log }) {
 		super();
@@ -26,9 +28,31 @@ class AgentHub extends EventEmitter {
 	/**
 	 * 接入一个 ps-agent WebSocket。ueHost = Agent 连接平台时用的 host:port（UE 在同一台机器上也能用它连回平台）
 	 */
+	/** ps-agent 连接使用的机器 ID（--id，未指定时按来源地址生成） */
+	machineIdFor(id, ip) {
+		return sanitizeId(id) || `agent-${normalizeIp(ip)}`;
+	}
+
+	/**
+	 * 机器 ID 是否已被另一台在线的渲染机占用（返回占用者，否则 null）。
+	 * 两台渲染机用同一个 ID 时若互相替换，会每隔一两秒把对方踢下线（其上的实例全部失败、观众被断开），所以拒绝后来者。
+	 * 同一地址（Agent 重启、断线重连）或旧连接已无响应时不算冲突，照常替换；平台内置的本机 Agent 的 ID 不能被外部 Agent 占用。
+	 */
+	conflictFor(machineId, ip) {
+		const prev = this.agents.get(machineId);
+		if (!prev) return null;
+		const fresh = prev.ready && Date.now() - prev.lastStatsAt < DUPLICATE_STALE_MS;
+		return prev.local || (fresh && prev.ip !== normalizeIp(ip)) ? prev : null;
+	}
+
+	reportConflict(conn, holder) {
+		this.log.error(`[agents] 机器 ID「${conn.machineId}」已被 ${holder.local ? "平台内置的本机 Agent" : holder.ip} 使用，拒绝来自 ${conn.ip} 的接入：请为该渲染机换一个机器名称（重新运行安装程序修改，或命令行 --id）`);
+		this.emit("conflict", conn, holder);
+	}
+
 	attachWs(ws, { id, ip, ueHost, legacy = false }) {
 		const conn = {
-			machineId: legacy ? `legacy-${normalizeIp(ip).replace(/[^0-9a-f]/gi, "-")}` : sanitizeId(id) || `agent-${normalizeIp(ip)}`,
+			machineId: legacy ? `legacy-${normalizeIp(ip).replace(/[^0-9a-f]/gi, "-")}` : this.machineIdFor(id, ip),
 			ip: normalizeIp(ip),
 			ueHost,
 			legacy,
@@ -50,6 +74,12 @@ class AgentHub extends EventEmitter {
 				return true;
 			},
 			close: () => ws.terminate(),
+			reject: (code, reason) => {
+				try {
+					ws.close(code, reason);
+				} catch {}
+				setTimeout(() => ws.terminate(), 2000).unref?.();
+			},
 		};
 		if (legacy) this.register(conn, { hostname: conn.machineId, platform: "exec-ue (legacy)", version: "legacy" });
 		// 心跳：信令层每 30s ping 一次，连续两次没有 pong 才断开；收到 pong 或任何消息都算存活
@@ -107,6 +137,15 @@ class AgentHub extends EventEmitter {
 	register(conn, info) {
 		const prev = this.agents.get(conn.machineId);
 		if (prev && prev !== conn) {
+			// 连接建立时已检查过（signaling 返回 409）；这里兜底两个 Agent 几乎同时接入的情况
+			const holder = conn.local ? null : this.conflictFor(conn.machineId, conn.ip);
+			if (holder) {
+				this.reportConflict(conn, holder);
+				conn.ready = false;
+				conn.rejected = true;
+				conn.reject?.(4409, "duplicate machine id");
+				return;
+			}
 			this.log.warn(`[agents] ${conn.machineId} 重复连接，替换旧连接`);
 			this.agents.delete(conn.machineId);
 			try {
@@ -133,6 +172,7 @@ class AgentHub extends EventEmitter {
 	}
 
 	onMessage(conn, msg) {
+		if (conn.rejected) return; // 因机器 ID 冲突被拒绝、正在断开的连接
 		switch (msg.type) {
 			case "hello":
 				return this.register(conn, msg);

@@ -956,6 +956,7 @@ namespace PsAgentSetup
 				if (text.Contains("[agent] connected")) { r.Connected = true; return; }
 				if (text.Contains("Unexpected server response: 401")) reason = "接入令牌不正确";
 				else if (text.Contains("Unexpected server response: 403")) reason = "本机 IP 不在平台允许的网段（系统设置 → 安全 → UE/Agent 允许网段）";
+				else if (text.Contains("Unexpected server response: 409")) reason = "机器名称已被另一台在线的渲染机使用：请再次运行安装程序，换一个机器名称";
 				else if (text.Contains("ECONNREFUSED")) reason = "平台拒绝连接（ECONNREFUSED）：请确认平台地址与端口";
 				else if (text.Contains("ETIMEDOUT") || text.Contains("EHOSTUNREACH") || text.Contains("ENETUNREACH")) reason = "网络不通：本机无法访问平台地址";
 				else if (text.Contains("ENOTFOUND")) reason = "平台地址无法解析";

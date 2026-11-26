@@ -8,6 +8,9 @@
  * 坐标转换：两组对应控制点（A1→B1、A2→B2）求相似变换（缩放+旋转+平移），把 CoordinateA[] 转换为 CoordinateB[]。
  */
 
+const MAX_ROUTING_POINTS = 1000;
+const MAX_ROUTE_WORK = 1.5e6; // 实测约 1~2 秒：例如 4 万节点 + 8 万路段的路网一次 12 个途经点，5 千规模的路网一次 300 个途经点
+
 function parseLocation(s) {
 	const m = String(s ?? "").match(/X=(-?[\d.]+(?:e-?\d+)?)\s*,\s*Y=(-?[\d.]+(?:e-?\d+)?)\s*,\s*Z=(-?[\d.]+(?:e-?\d+)?)/i);
 	if (!m) throw new Error(`坐标格式错误（应为 X=..,Y=..,Z=..）：${s}`);
@@ -143,6 +146,10 @@ class RoadNetwork {
 function pathfind(body) {
 	const rps = body?.routingPoints;
 	if (!Array.isArray(rps) || rps.length < 2) throw new Error("routingPoints 至少需要两个途经点");
+	if (rps.length > MAX_ROUTING_POINTS) throw new Error(`途经点过多（最多 ${MAX_ROUTING_POINTS} 个）`);
+	// 计算在信令所在的进程内同步执行：限制总计算量（途经点数 × 路网规模），避免单个请求长时间阻塞所有观众的信令
+	const size = (Array.isArray(body?.roadNet?.points) ? body.roadNet.points.length : 0) + (Array.isArray(body?.roadNet?.lines) ? body.roadNet.lines.length : 0);
+	if (rps.length * size > MAX_ROUTE_WORK) throw new Error(`计算量过大：途经点数 × 路网规模（节点数 + 路段数）不能超过 ${MAX_ROUTE_WORK.toLocaleString("en-US")}，请减少途经点或分段请求`);
 	const net = new RoadNetwork(body?.roadNet?.points, body?.roadNet?.lines);
 	const out = [];
 	let total = 0;

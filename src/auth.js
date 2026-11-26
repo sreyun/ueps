@@ -105,7 +105,10 @@ class LoginLimiter {
 		return 0;
 	}
 	fail(ip) {
-		const e = this.map.get(ip) || { fails: 0 };
+		let e = this.map.get(ip);
+		// 失败次数只在一个锁定时长的窗口内累计：几天前偶尔输错的次数不再计入（否则一次手误就可能被锁定）
+		if (!e || (!e.lockUntil && Date.now() - e.last > this.lockMs)) e = { fails: 0 };
+		e.last = Date.now();
 		e.fails++;
 		if (e.fails >= this.maxFails) e.lockUntil = Date.now() + this.lockMs;
 		this.map.set(ip, e);

@@ -28,7 +28,7 @@ const { firstLanIPv4, ipInList, randomSecret, throttle } = require("./util.js");
 const { createAgent } = require("../agent/agent.js");
 const { AgentPackages, configSection } = require("./downloads.js");
 
-const VERSION = "1.3.1";
+const VERSION = "1.3.2";
 
 function createApp({ config, assetsDir, log, selfCommand, env = process.env }) {
 	log = log || createLogger({ level: config.log.level, dir: config.log.file ? path.join(config.dataDir, "logs") : null, retentionDays: config.log.retentionDays });
@@ -108,6 +108,7 @@ function createApp({ config, assetsDir, log, selfCommand, env = process.env }) {
 	/* ---------------------------------------------------- 告警 */
 	agents.on("offline", (a) => alerts.notify("agent.offline", `渲染机 ${a.machineId}（${a.ip}）已离线`, { key: a.machineId }));
 	agents.on("online", (a) => alerts.notify("agent.online", `渲染机 ${a.machineId}（${a.ip}）已上线`, { key: a.machineId }));
+	agents.on("conflict", (a, prev) => alerts.notify("agent.conflict", `机器 ID「${a.machineId}」已被 ${prev.local ? "平台内置的本机 Agent" : prev.ip} 使用，已拒绝 ${a.ip} 的接入，请为该渲染机换一个机器名称`, { key: `${a.machineId}:${a.ip}` }));
 	scheduler.on("removed", (inst, reason) => {
 		if (!String(reason).startsWith("failed")) return;
 		metrics.inc("instancesFailed");
@@ -498,11 +499,11 @@ function createApp({ config, assetsDir, log, selfCommand, env = process.env }) {
 			rateLimiter.stop();
 			signaling.close();
 			// 平台正常停止时一并结束本机 Agent 拉起的 UE（异常崩溃时则由进程表在下次启动时接管）
-		for (const a of agents.agents.values()) {
-			if (!a.local) continue;
-			if (config.localAgent.killOnStop !== false) a.agent?.killAll();
-			a.close();
-		}
+			for (const a of agents.agents.values()) {
+				if (!a.local) continue;
+				if (config.localAgent.killOnStop !== false) a.agent?.killAll();
+				a.close();
+			}
 			turnProc?.kill();
 			for (const ws of EVENTS.clients) ws.terminate();
 			await Promise.all(servers.map((s) => new Promise((r) => (s.closeAllConnections?.(), s.close(() => r())))));

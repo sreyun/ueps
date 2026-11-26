@@ -76,7 +76,7 @@ function defaultRuntime(config) {
 			publicTools: false, // 工具接口（寻路/坐标转换）是否免登录开放（观众口也可调用）
 			rateLimit: { wsPerSec: 20, wsBurst: 100, apiPerSec: 20, apiBurst: 60 }, // 每 IP 限流，0 = 不限（企业 NAT 下几十人共用一个出口 IP，观众连接不宜过严）
 		},
-		alerts: { webhook: "", format: "generic", name: "云渲染管理平台", events: ["agent.offline", "instance.failed", "program.capacity", "queue.backlog", "turn.down"], queueBacklogSec: 60, throttleSec: 60 },
+		alerts: { webhook: "", format: "generic", name: "云渲染管理平台", events: ["agent.offline", "agent.conflict", "instance.failed", "program.capacity", "queue.backlog", "turn.down"], queueBacklogSec: 60, throttleSec: 60 },
 	};
 }
 

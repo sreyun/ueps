@@ -91,3 +91,73 @@ test("logger: ring buffer filtering by level, keyword and cursor", () => {
 	assert.strictEqual(log.recent({ after: all[1].seq }).length, 2);
 	assert.match(log.recent({ level: "error" })[0].msg, /boom/);
 });
+
+test("agents: duplicate machine ID from another live machine is rejected; same-IP reconnect / stale connection / built-in ID", () => {
+	const { AgentHub } = require("../src/agents.js");
+	const machines = new Map();
+	const store = { getMachine: (id) => machines.get(id) || null, touchMachine: (id, f) => machines.set(id, { id, enabled: true, ...f }) };
+	const log = { info() {}, warn() {}, error() {} };
+	const hub = new AgentHub({ store, log });
+	const conflicts = [];
+	hub.on("conflict", (c, holder) => conflicts.push([c.ip, holder.ip]));
+	const fakeWs = () => {
+		const ws = new (require("events").EventEmitter)();
+		ws.readyState = 1;
+		ws.send = () => {};
+		ws.close = (code) => (ws.closedWith = code);
+		ws.terminate = () => (ws.terminated = true);
+		return ws;
+	};
+	const join = (ip, id = "render-01") => {
+		const ws = fakeWs();
+		const conn = hub.attachWs(ws, { id, ip });
+		ws.emit("message", JSON.stringify({ type: "hello", hostname: "h", platform: "t", version: "t", gpus: [] }));
+		return { ws, conn };
+	};
+	const a = join("10.0.0.1");
+	assert.strictEqual(hub.get("render-01"), a.conn);
+	// 另一台机器用同一个 ID：连接前即可判定（signaling 返回 409），注册时也会兜底拒绝，原连接不受影响
+	assert.strictEqual(hub.conflictFor("render-01", "10.0.0.2"), a.conn);
+	const b = join("10.0.0.2");
+	assert.strictEqual(b.ws.closedWith, 4409);
+	assert.strictEqual(hub.get("render-01"), a.conn, "existing machine keeps its connection");
+	assert.ok(!a.ws.terminated);
+	assert.deepStrictEqual(conflicts, [["10.0.0.2", "10.0.0.1"]]);
+	b.ws.emit("message", JSON.stringify({ type: "started", instanceId: "x" }));
+	// 同一地址重连（Agent 重启）：替换旧连接
+	assert.strictEqual(hub.conflictFor("render-01", "10.0.0.1"), null);
+	const c = join("10.0.0.1");
+	assert.strictEqual(hub.get("render-01"), c.conn);
+	assert.ok(a.ws.terminated);
+	// 旧连接已超过 15 秒没有上报（例如渲染机换了 IP、旧 TCP 连接半开）：新地址可以接管
+	c.conn.lastStatsAt = Date.now() - 20000;
+	const d = join("10.0.0.3");
+	assert.strictEqual(hub.get("render-01"), d.conn);
+	// 平台内置本机 Agent 的 ID 不能被占用
+	hub.agents.set("local", { machineId: "local", local: true, ready: true, ip: "127.0.0.1", lastStatsAt: Date.now() });
+	assert.ok(hub.conflictFor("local", "127.0.0.1"));
+	assert.strictEqual(join("10.0.0.9", "local").ws.closedWith, 4409);
+});
+
+test("tools.pathfind: bounded work per request (signaling shares the event loop)", () => {
+	const P = (id, x) => ({ id, location: `X=${x},Y=0,Z=0` });
+	const roadNet = { points: [P("a", 0), P("b", 10)], lines: [{ linkIds: "a,b" }] };
+	const rp = (x) => ({ rp_location: `X=${x},Y=1,Z=0` });
+	assert.throws(() => pathfind({ roadNet, routingPoints: Array.from({ length: 1001 }, (_, i) => rp(i % 10)) }), /途经点过多/);
+	const big = { points: Array.from({ length: 20000 }, (_, i) => P(String(i), i)), lines: Array.from({ length: 19999 }, (_, i) => ({ linkIds: `${i},${i + 1}` })) };
+	assert.throws(() => pathfind({ roadNet: big, routingPoints: Array.from({ length: 40 }, (_, i) => rp(i)) }), /计算量过大/);
+	assert.strictEqual(pathfind({ roadNet: big, routingPoints: [rp(1), rp(19000)] }).status, 0, "large network with a few points is fine");
+});
+
+test("auth.LoginLimiter: failures outside the lock window do not accumulate", () => {
+	const auth = require("../src/auth.js");
+	const lim = new auth.LoginLimiter({ maxFails: 3, lockMs: 1000 });
+	lim.fail("ip");
+	lim.fail("ip");
+	lim.map.get("ip").last -= 5000; // 两次失败发生在很久以前
+	lim.fail("ip");
+	assert.strictEqual(lim.isLocked("ip"), 0, "old failures expired");
+	lim.fail("ip");
+	lim.fail("ip");
+	assert.ok(lim.isLocked("ip") > 0, "three failures within the window lock");
+});

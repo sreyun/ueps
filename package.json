@@ -1,6 +1,6 @@
 {
 	"name": "ps-platform",
-	"version": "1.3.1",
+	"version": "1.3.2",
 	"private": true,
 	"description": "UE 像素流云渲染管理平台：信令 + 实例调度 + 管理端 + 内置 TURN/TCP 中继（经 nginx 单端口对外，零 UDP 映射）",
 	"main": "server.js",

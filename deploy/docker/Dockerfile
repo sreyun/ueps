@@ -3,8 +3,8 @@
 #   demo-agent  演示用渲染节点：ps-platform Agent + 无头 Chromium（以 UE 身份推送测试画面，没有 UE 时查看整条链路）
 #
 # 构建（在 ps-platform 目录）：
-#   docker build -f deploy/docker/Dockerfile -t ps-platform:1.1 .
-#   docker build -f deploy/docker/Dockerfile --target demo-agent -t ps-platform-demo-agent:1.1 .
+#   docker build -f deploy/docker/Dockerfile -t ps-platform:local .
+#   docker build -f deploy/docker/Dockerfile --target demo-agent -t ps-platform-demo-agent:local .
 # 国内网络：--build-arg NODE_IMAGE=docker.m.daocloud.io/library/node:22-alpine --build-arg APK_MIRROR=https://mirrors.aliyun.com --build-arg NPM_REGISTRY=https://registry.npmmirror.com
 ARG NODE_IMAGE=node:22-alpine
 

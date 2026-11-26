@@ -4,6 +4,7 @@ const NEW_SERVER = { id: "", name: "", urls: [], secret: "", scope: "player", au
 const ALERT_EVENTS = {
 	"agent.offline": "渲染机离线",
 	"agent.online": "渲染机上线",
+	"agent.conflict": "渲染机名称冲突（被拒绝接入）",
 	"instance.failed": "实例启动失败",
 	"program.capacity": "资源不足（无可用机器/GPU）",
 	"queue.backlog": "观众排队积压",

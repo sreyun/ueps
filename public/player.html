@@ -268,13 +268,19 @@
 					$("net").lastChild.textContent = "--";
 					return;
 				}
-				const stats = await ps.pc.getStats();
+				// 重连 / 切换实例时连接可能在等待期间被关闭：本次跳过即可
+				let stats, t;
+				try {
+					stats = await ps.pc.getStats();
+					t = await ps.getTransportInfo();
+				} catch {
+					return;
+				}
 				let v = null, bytes = 0;
 				stats.forEach((s) => {
 					if (s.type === "inbound-rtp" && (s.kind || s.mediaType) === "video") v = s;
 					if (s.type === "transport") bytes += s.bytesReceived || 0;
 				});
-				const t = await ps.getTransportInfo();
 				const now = performance.now();
 				const kbps = last ? Math.round(((bytes - last.b) * 8) / (now - last.t)) : 0;
 				const lostNow = last && v ? (v.packetsLost || 0) - last.lost : 0;

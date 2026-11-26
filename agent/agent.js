@@ -366,12 +366,22 @@ function main(argv = process.argv.slice(2)) {
 				agent.handle(JSON.parse(raw));
 			} catch {}
 		});
+		let conflict = false;
 		ws.on("close", (code) => {
+			if (code === 4409 || conflict) {
+				// 平台上已有另一台在线的渲染机使用相同的机器 ID：换一个名称前不会被接入（30 秒后重试，对方下线后自动接入）
+				console.error(`[agent] 机器 ID「${o.id}」已被另一台在线的渲染机使用，平台拒绝接入。请为本机换一个名称（重新运行安装程序修改「机器名称」，或命令行 --id）。30 秒后重试`);
+				setTimeout(connect, 30 * 1000);
+				return;
+			}
 			const delay = Math.min(15, 2 ** retry++) * 1000;
 			console.log(`[agent] disconnected (${code}), retry in ${delay / 1000}s`);
 			setTimeout(connect, delay);
 		});
-		ws.on("error", (e) => console.log(`[agent] ${e.message}`));
+		ws.on("error", (e) => {
+			if (/server response: 409/.test(e.message)) conflict = true; // 连接时即被拒绝：机器 ID 已被占用（安装向导也据此提示）
+			console.log(`[agent] ${e.message}`);
+		});
 	};
 	connect();
 	const shutdown = () => {

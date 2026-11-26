@@ -53,7 +53,7 @@ export function Machines() {
 										<div class="muted small">实例 ${onIt.filter((i) => i.gpu === g.index).length}</div>
 									</div>`
 							  )
-							: html`<div class="muted small" style="grid-column:1/-1">未检测到 NVIDIA GPU（未安装驱动或 nvidia-smi 不可用），按实例数放置；可在「设置」中手动定义 GPU。</div>`}
+							: html`<div class="muted small" style="grid-column:1/-1">未检测到 NVIDIA GPU（未安装驱动或 nvidia-smi 不可用），按实例数放置；可点下方「设置」手动定义 GPU。</div>`}
 					</div>
 					<div class="muted small">运行中的实例：${onIt.length ? onIt.map((i) => html`<code>${i.id}</code> `) : "无"}</div>
 					${can("operator") &&
@@ -280,7 +280,8 @@ function EditModal({ m, onClose }) {
 	return html`<${Modal} title=${`渲染机设置：${m.id}`} onClose=${onClose} footer=${html`<button class="ghost" onClick=${onClose}>取消</button><${AsyncButton} class="primary" onClick=${save}>保存<//>`}>
 		<${Field} label="显示名称"><input value=${name} maxlength="64" onInput=${(e) => setName(e.target.value)} /><//>
 		<${Field} label="最多实例数" hint="0 = 不限制（仍受显存约束）"><input type="number" min="0" value=${max} onInput=${(e) => setMax(e.target.value)} /><//>
-		<${Field} label="手动定义 GPU" hint="无法自动检测显卡时（国产/AMD 显卡、未装 nvidia-smi）在此填写，平台按程序的估算显存分配；能自动检测时以实时数据为准">
+		<div class="field">
+			<span class="field-l">手动定义 GPU</span>
 			<div>
 				${gpus.map(
 					(g, i) => html`<div class="gpu-row">
@@ -292,6 +293,7 @@ function EditModal({ m, onClose }) {
 				)}
 				<button class="ghost sm" onClick=${() => setGpus([...gpus, { index: gpus.length, name: "", memTotalMB: 8192 }])}>＋ 添加 GPU</button>
 			</div>
-		<//>
+			<span class="field-h">无法自动检测显卡时（国产/AMD 显卡、未装 nvidia-smi）在此填写，平台按程序的估算显存分配；能自动检测时以实时数据为准</span>
+		</div>
 	<//>`;
 }

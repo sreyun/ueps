@@ -159,3 +159,20 @@ test("backup/restore, log viewer, connection rate limit, custom site hosting", a
 	assert.match((await P.request(P.PUB, "GET", "/")).text, /my portal/);
 	assert.strictEqual((await P.request(P.PUB, "GET", "/../config.json")).status, 404);
 });
+
+test("render machines with the same machine ID: the second live machine is refused (HTTP 409), not flapping", async () => {
+	const { wsClient } = require("./helpers.js");
+	const first = await P.agent("dup-id");
+	P.app.agents.get("dup-id").ip = "10.9.9.9"; // 模拟"另一台机器"已在线（测试连接都来自 127.0.0.1）
+	await assert.rejects(wsClient(`ws://127.0.0.1:${P.ADMIN}/agent?token=${P.app.secrets.agentToken}&id=dup-id`, "ps-agent"), /HTTP 409/);
+	assert.strictEqual(P.app.agents.get("dup-id").ip, "10.9.9.9", "existing machine still connected");
+	assert.ok(P.app.log.recent({ q: "dup-id" }).some((e) => /已被 10\.9\.9\.9 使用/.test(e.msg)));
+	first.close();
+});
+
+test("an admin cannot disable their own account", async () => {
+	const me = (await P.api("GET", "/api/v1/auth/me")).body.user;
+	const r = await P.api("PUT", `/api/v1/users/${me.id}`, { disabled: true });
+	assert.strictEqual(r.status, 409);
+	assert.strictEqual((await P.api("GET", "/api/v1/auth/me")).status, 200, "still logged in");
+});

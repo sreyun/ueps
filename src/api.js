@@ -474,6 +474,7 @@ function registerApi(router, ctx) {
 				fields.role = body.role;
 			}
 			if (body.disabled !== undefined) fields.disabled = !!body.disabled;
+			if (fields.disabled && id === req.user.id) throw httpErr(409, "不能禁用当前登录的用户");
 			if (body.password) {
 				const bad = checkPasswordPolicy(body.password);
 				if (bad) throw httpErr(400, bad);

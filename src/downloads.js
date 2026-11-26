@@ -334,11 +334,16 @@ class AgentPackages {
 		this.jobs.set("windows", job);
 		fs.mkdirSync(this.dir, { recursive: true });
 		const tmp = path.join(this.dir, `.${t.file}.${process.pid}.build.part`);
+		let out = null;
 		try {
-			const out = fs.createWriteStream(tmp);
+			out = fs.createWriteStream(tmp);
+			// 磁盘写满、权限不足、杀毒软件占用等写入错误：记录下来由 put / close 抛出（否则无人监听的 error 事件会让任务永远停在"正在生成"）
+			let outErr = null;
+			out.on("error", (e) => (outErr = e));
 			const hash = crypto.createHash("sha256");
 			let written = 0;
 			const put = async (b) => {
+				if (outErr) throw outErr;
 				hash.update(b);
 				written += b.length;
 				await writeChunk(out, b);
@@ -359,14 +364,21 @@ class AgentPackages {
 			}
 			await put(trailer(8 + gzLen, AGENT_TAG));
 			out.end();
-			await once(out, "close");
+			if (!out.closed) await once(out, "close");
+			if (outErr) throw outErr;
 			fs.renameSync(tmp, dest);
 			this.setMeta("windows", { origin: "self", version: this.version, size: written, sha256: hash.digest("hex"), at: Date.now(), by: null });
 			job.state = "done";
 			this.log.info(`[downloads] 已生成 Windows 安装程序（${(written / 1048576).toFixed(1)} MB）`);
 			return true;
 		} catch (e) {
-			fs.rmSync(tmp, { force: true });
+			if (out && !out.closed) {
+				out.destroy();
+				await Promise.race([once(out, "close").catch(() => {}), new Promise((r) => setTimeout(r, 3000))]);
+			}
+			try {
+				fs.rmSync(tmp, { force: true });
+			} catch {}
 			job.state = "error";
 			job.error = e.message;
 			this.log.warn(`[downloads] 生成 Windows 安装程序失败：${e.message}`);

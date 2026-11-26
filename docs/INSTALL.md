@@ -1,6 +1,6 @@
 # ps-platform 安装部署与运维手册
 
-> 适用版本：ps-platform 1.3.1　|　运行环境：Node.js ≥ 22.13（或直接使用打包好的 `ps-platform.exe`，无需安装 Node.js）
+> 适用版本：ps-platform 1.3.2　|　运行环境：Node.js ≥ 22.13（或直接使用打包好的 `ps-platform.exe`，无需安装 Node.js）
 
 目录
 
@@ -151,7 +151,7 @@ cd deploy && docker compose up -d --build
 
 ```bash
 # deploy/.env
-PS_IMAGE=swr.cn-east-3.myhuaweicloud.com/sreyun/ps-platform:1.3.1
+PS_IMAGE=swr.cn-east-3.myhuaweicloud.com/sreyun/ps-platform:1.3.2
 
 docker compose pull platform           # 拉取平台镜像（nginx 镜像同样从 NGINX_IMAGE 拉取）
 docker compose up -d --no-build
@@ -159,7 +159,7 @@ docker compose up -d --no-build
 
 | 镜像标签 | 含义 |
 |---|---|
-| `1.3.1` | 固定版本（**生产环境推荐**，升级时显式修改） |
+| `1.3.2` | 固定版本（**生产环境推荐**，升级时显式修改） |
 | `1.3` / `1` | 该次版本 / 主版本的最新发布 |
 | `latest` | 最新正式发布 |
 | `sha-xxxxxxx` | 对应某次提交，排查问题时使用 |
@@ -477,6 +477,7 @@ NODE_TLS_REJECT_UNAUTHORIZED=0 node test/load/platform-load.js --admin http://12
 |---|---|---|
 | nginx 不断重启（Restarting），日志 `cannot load certificate "/etc/nginx/certs/fullchain.pem"` | 1.2.2 及更早版本的部署文件要求必须有证书 | 更新部署文件（`git pull` 或覆盖 `deploy/`）后 `docker compose up -d`：没有证书时自动以仅 http 模式运行（见 3.2）；或按 3.2 生成自签名证书后 `docker compose restart nginx` |
 | 播放页一直"排队中" | 没有可用实例：Agent 离线 / 程序未配置可执行文件 / 达到最大实例数 / 显存不足 | 管理端「概览」与「程序」的错误提示；「运行日志」搜索 `没有可用的机器` |
+| 渲染机接不上，Agent 日志 `Unexpected server response: 409` / 安装向导提示「机器名称已被另一台在线的渲染机使用」 | 两台渲染机用了同一个机器名称（`--id`，安装程序默认取计算机名；克隆的系统镜像常见）。平台拒绝后接入的一台，避免两台机器互相踢下线 | 「运行日志」搜索 `机器 ID` 查看冲突的两个地址；在其中一台上重新运行安装程序修改「机器名称」（命令行方式改 `--id`）。另一台下线 15 秒后同名机器即可接入 |
 | 实例反复"启动失败" | 路径错误、不在 `--allow-exe` 目录、UE 未连上平台 | 日志 `启动失败：…`；检查 UE 能否访问 `ws://网关:88`（防火墙放行 88），`engineAllow` 是否包含渲染机网段 |
 | 黑屏，状态显示连接中 | ICE 不通：TURN 未运行、`relayIp` 不是 UE 可达的内网 IP、`allowedPeers` 不含 UE 网段 | `/healthz` 中 turn=up；日志 `relay <IP>`；渲染机 ping 网关 IP；放行网关 UDP 中继端口段（内网） |
 | 外网能打开页面但没画面 | nginx 未做 TURN 分流（用了普通 http 反代）、端口映射到了错误端口 | 使用本项目的 nginx 配置；stream 日志里应有 `-> 127.0.0.1:3479/5349` 的 TURN 连接 |
