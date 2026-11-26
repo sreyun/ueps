@@ -1,6 +1,7 @@
 // 管理端入口：登录、布局、路由
 import { html, render } from "./vendor/preact-htm.js";
-import { api, store, useStore, connectEvents, disconnectEvents, useState, useEffect, toast, dismissToast, Field, ROLE_LABEL, can, ConfirmHost } from "./lib.js";
+import { api, store, useStore, connectEvents, disconnectEvents, useState, useEffect, toast, dismissToast, Field, ROLE_LABEL, can, ConfirmHost, Icon } from "./lib.js";
+import { Logo } from "./icons.js";
 import { Dashboard } from "./pages/dashboard.js";
 import { Instances } from "./pages/instances.js";
 import { Programs } from "./pages/programs.js";
@@ -17,26 +18,26 @@ const NAV = [
 	{
 		group: "运营",
 		items: [
-			{ path: "/", label: "概览", icon: "◎", page: Dashboard, role: "viewer", desc: "观众、实例、机器与链路的实时状态" },
-			{ path: "/sessions", label: "观众会话", icon: "◉", page: Sessions, role: "viewer", desc: "在线观众的播放质量、历史记录与使用统计" },
+			{ path: "/", label: "概览", icon: "dashboard", page: Dashboard, role: "viewer", desc: "观众、实例、机器与链路的实时状态" },
+			{ path: "/sessions", label: "观众会话", icon: "viewers", page: Sessions, role: "viewer", desc: "在线观众的播放质量、历史记录与使用统计" },
 		],
 	},
 	{
 		group: "资源",
 		items: [
-			{ path: "/programs", label: "程序与访问", icon: "◇", page: Programs, role: "viewer", desc: "UE 应用的启动、调度与访问方式（播放地址 / 嵌入代码）" },
-			{ path: "/instances", label: "实例", icon: "▣", page: Instances, role: "viewer", desc: "正在运行的 UE 进程，平台按需自动启停" },
-			{ path: "/machines", label: "渲染机 / GPU", icon: "▤", page: Machines, role: "viewer", desc: "渲染节点、GPU 负载与接入方法" },
-			{ path: "/links", label: "访问链接", icon: "⛓", page: Links, role: "viewer", desc: "带有效期、次数限制的观众访问链接" },
+			{ path: "/programs", label: "程序与访问", icon: "program", page: Programs, role: "viewer", desc: "UE 应用的启动、调度与访问方式（播放地址 / 嵌入代码）" },
+			{ path: "/instances", label: "实例", icon: "instance", page: Instances, role: "viewer", desc: "正在运行的 UE 进程，平台按需自动启停" },
+			{ path: "/machines", label: "渲染机 / GPU", icon: "server", page: Machines, role: "viewer", desc: "渲染节点、GPU 负载与接入方法" },
+			{ path: "/links", label: "访问链接", icon: "link", page: Links, role: "viewer", desc: "带有效期、次数限制的观众访问链接" },
 		],
 	},
 	{
 		group: "系统",
 		items: [
-			{ path: "/settings", label: "系统设置", icon: "⚙", page: Settings, role: "admin", desc: "对外地址、播放链路、安全、告警、API 令牌与备份" },
-			{ path: "/users", label: "用户", icon: "☺", page: Users, role: "admin", desc: "管理端账号与角色" },
-			{ path: "/logs", label: "运行日志", icon: "≣", page: Logs, role: "admin", desc: "平台、调度与 TURN 的实时日志" },
-			{ path: "/audit", label: "审计日志", icon: "☰", page: Audit, role: "admin", desc: "所有管理操作的记录" },
+			{ path: "/settings", label: "系统设置", icon: "settings", page: Settings, role: "admin", desc: "对外地址、播放链路、安全、告警、API 令牌与备份" },
+			{ path: "/users", label: "用户", icon: "users", page: Users, role: "admin", desc: "管理端账号与角色" },
+			{ path: "/logs", label: "运行日志", icon: "terminal", page: Logs, role: "admin", desc: "平台、调度与 TURN 的实时日志" },
+			{ path: "/audit", label: "审计日志", icon: "shield", page: Audit, role: "admin", desc: "所有管理操作的记录" },
 		],
 	},
 ];
@@ -52,6 +53,19 @@ function useRoute() {
 		return () => window.removeEventListener("hashchange", f);
 	}, []);
 	return r;
+}
+
+/** 主题切换：跟随系统 → 浅色 → 深色 */
+const THEMES = { auto: ["monitor", "跟随系统"], light: ["sun", "浅色"], dark: ["moon", "深色"] };
+const NEXT_THEME = { auto: "light", light: "dark", dark: "auto" };
+function ThemeToggle() {
+	const [t, setT] = useState(() => window.psTheme?.get() || "auto");
+	const next = NEXT_THEME[t];
+	const click = () => {
+		window.psTheme?.set(next);
+		setT(next);
+	};
+	return html`<button type="button" class="icon" onClick=${click} title=${`主题：${THEMES[t][1]}（点击切换为${THEMES[next][1]}）`} aria-label="切换主题"><${Icon} name=${THEMES[t][0]} size=${18} /></button>`;
 }
 
 function Login() {
@@ -88,19 +102,20 @@ function Login() {
 		}
 	};
 	return html`<div class="login">
+		<div class="login-theme"><${ThemeToggle} /></div>
 		<form class="login-card" onSubmit=${submit}>
-			<div class="brand big"><b>▶</b> 云渲染管理平台</div>
-			<p class="muted login-sub">UE 像素流 · 实例调度 · 单端口对外服务</p>
+			<div class="brand big"><${Logo} size=${36} /> 云渲染管理平台</div>
+			<p class="login-sub">UE 像素流 · 实例调度 · 单端口对外服务</p>
 			${needCode
 				? html`<${Field} label="两步验证码" hint="打开手机验证器 App，输入 ${u} 的 6 位动态码">
 						<input inputmode="numeric" autocomplete="one-time-code" maxlength="6" value=${code} onInput=${(e) => setCode(e.target.value.replace(/\D/g, ""))} autofocus required />
 					<//>`
 				: html`<${Field} label="用户名"><input autocomplete="username" value=${u} onInput=${(e) => setU(e.target.value)} required /><//>
 						<${Field} label="口令"><input type="password" autocomplete="current-password" value=${p} onInput=${(e) => setP(e.target.value)} required autofocus /><//>`}
-			${err && html`<div class="alert bad">${err}</div>`}
+			${err && html`<div class="alert has-ico bad"><${Icon} name="xCircle" /><div>${err}</div></div>`}
 			<button class="primary block" disabled=${busy || (needCode && code.length !== 6)}>${busy ? "登录中…" : needCode ? "验证" : "登录"}</button>
 			${needCode && html`<button type="button" class="ghost block" onClick=${() => (setNeedCode(false), setCode(""), setErr(""))}>返回</button>`}
-			<p class="muted small login-foot">首次部署的初始口令在数据目录的 initial-admin.txt 中；忘记口令可在服务器执行 <code>--reset-password admin</code>。</p>
+			<p class="small login-foot">首次部署的初始口令在数据目录的 initial-admin.txt 中；忘记口令可在服务器执行 <code>--reset-password admin</code>。</p>
 		</form>
 	</div>`;
 }
@@ -114,10 +129,11 @@ function HealthBanner() {
 	if (s.mustChangePassword) items.push(["warn", html`当前账户仍在使用初始口令，<a href="#/account">请立即修改</a>。`]);
 	if (k?.turn && k.turn.enabled && !k.turn.up) items.push(["bad", "内置 TURN 未运行：外网观众将无法播放。请查看「运行日志」中的 [turn] 记录。"]);
 	if (k?.machines?.total && !k.machines.online) items.push(["bad", html`所有渲染机都已离线，新观众无法进入。<a href="#/machines">查看渲染机</a>`]);
+	if (can("admin") && s.overview?.config?.pendingRestart) items.push(["warn", html`${s.overview.config.pendingRestart} 项系统参数修改需重启平台后生效。<a href=${`#/settings?tab=cfg:${s.overview.config.pendingGroups?.[0] || "network"}`}>查看</a>`]);
 	const broken = (s.overview?.programs || []).filter((p) => p.enabled && p.lastError);
 	if (broken.length) items.push(["warn", html`${broken.length} 个程序最近启动异常：${broken.map((p) => p.name).join("、")}。<a href="#/programs">查看详情</a>`]);
 	if (!items.length) return null;
-	return html`<div class="banners">${items.map(([tone, text]) => html`<div class="banner ${tone}">${text}</div>`)}</div>`;
+	return html`<div class="banners">${items.map(([tone, text]) => html`<div class="banner ${tone}"><${Icon} name=${tone === "bad" ? "xCircle" : "alert"} /><div>${text}</div></div>`)}</div>`;
 }
 
 function Layout({ route }) {
@@ -138,7 +154,7 @@ function Layout({ route }) {
 	};
 	return html`<div class=${"shell" + (menu ? " menu-open" : "")}>
 		<aside class="side">
-			<div class="brand"><b>▶</b> 云渲染管理平台</div>
+			<div class="brand"><${Logo} size=${30} /><div>云渲染管理平台<small>Pixel Streaming Platform</small></div></div>
 			<nav>
 				${NAV.map((g) => {
 					const items = g.items.filter((n) => can(n.role));
@@ -146,7 +162,7 @@ function Layout({ route }) {
 						items.length > 0 &&
 						html`<div class="nav-group">${g.group}</div>
 							${items.map(
-								(n) => html`<a href=${"#" + n.path} class=${route === n.path ? "on" : ""}><i>${n.icon}</i>${n.label}
+								(n) => html`<a href=${"#" + n.path} class=${route === n.path ? "on" : ""} aria-current=${route === n.path ? "page" : undefined}><${Icon} name=${n.icon} size=${18} />${n.label}
 									${n.path === "/sessions" && k?.queued ? html`<em class="pill warn" title="排队人数">${k.queued}</em>` : ""}
 									${n.path === "/machines" && k?.machines?.total && k.machines.online < k.machines.total ? html`<em class="pill bad" title="离线渲染机">${k.machines.total - k.machines.online}</em>` : ""}</a>`
 							)}`
@@ -161,20 +177,24 @@ function Layout({ route }) {
 		<div class="scrim" onClick=${() => setMenu(false)}></div>
 		<main class="main">
 			<header class="top">
-				<button class="icon menu-btn" onClick=${() => setMenu(!menu)} aria-label="菜单">☰</button>
+				<button class="icon menu-btn" onClick=${() => setMenu(!menu)} aria-label="菜单"><${Icon} name="menu" size=${20} /></button>
 				<div class="top-title">
 					<h1>${item.label}</h1>
 					<div class="top-desc">${item.desc}</div>
 				</div>
 				<div class="top-r">
-					${k && html`<span class="top-stat" title="在线观众 / 排队">◉ ${k.viewers}${k.queued ? html` <span class="text-warn">· 排队 ${k.queued}</span>` : ""}</span>`}
+					${k && html`<a class="top-stat" href="#/sessions" title="在线观众 / 排队"><${Icon} name="viewers" size=${14} />在线 <b>${k.viewers}</b>${k.queued ? html`<span class="text-warn">· 排队 ${k.queued}</span>` : ""}</a>`}
+					<${ThemeToggle} />
 					<div class="user-menu">
-						<button class="ghost" onClick=${() => setUserMenu(!userMenu)} onBlur=${() => setTimeout(() => setUserMenu(false), 150)}>${s.user.username} <span class="muted">· ${ROLE_LABEL[s.user.role]}</span> ▾</button>
+						<button class="ghost user-btn" onClick=${() => setUserMenu(!userMenu)} onBlur=${() => setTimeout(() => setUserMenu(false), 150)} aria-haspopup="menu" aria-expanded=${userMenu}>
+							<span class="avatar">${(s.user.username || "?").slice(0, 1)}</span><span class="user-name">${s.user.username}</span><${Icon} name="chevronDown" size=${14} />
+						</button>
 						${userMenu &&
-						html`<div class="dropdown">
-							<a href="#/account">我的账户</a>
-							<a href=${s.publicBaseUrl ? s.publicBaseUrl + "/" : "/?portal"} target="_blank" rel="noopener">打开观众门户</a>
-							<button onClick=${logout}>退出登录</button>
+						html`<div class="dropdown" role="menu">
+							<div class="dropdown-h"><b>${s.user.username}</b><div class="muted small">${ROLE_LABEL[s.user.role]}</div></div>
+							<a href="#/account"><${Icon} name="user" />我的账户</a>
+							<a href=${s.publicBaseUrl ? s.publicBaseUrl + "/" : "/?portal"} target="_blank" rel="noopener"><${Icon} name="external" />打开观众门户</a>
+							<button onClick=${logout}><${Icon} name="logout" />退出登录</button>
 						</div>`}
 					</div>
 				</div>
@@ -189,7 +209,7 @@ function Layout({ route }) {
 
 function Toasts() {
 	const s = useStore();
-	return html`<div class="toasts" aria-live="polite">${(s.toasts || []).map((t) => html`<div class="toast ${t.tone}" key=${t.id} onClick=${() => dismissToast(t.id)} title="点击关闭">${t.text}</div>`)}</div>`;
+	return html`<div class="toasts" aria-live="polite">${(s.toasts || []).map((t) => html`<div class="toast ${t.tone}" key=${t.id} onClick=${() => dismissToast(t.id)} title="点击关闭"><${Icon} name=${t.tone === "bad" ? "xCircle" : t.tone === "warn" ? "alert" : "checkCircle"} /><div>${t.text}</div></div>`)}</div>`;
 }
 
 function App() {
@@ -209,7 +229,7 @@ function App() {
 			api("GET", "/overview").then((o) => store.set({ overview: o }), () => {});
 		}
 	}, [s.user?.id]);
-	if (s.forbidden) return html`<div class="login"><div class="login-card"><div class="alert bad">${s.forbidden}</div><p class="muted">管理端只允许从配置的管理网段访问（config.json → security.adminAllow）。</p></div></div>`;
+	if (s.forbidden) return html`<div class="login"><div class="login-card"><div class="brand big"><${Logo} size=${36} /> 云渲染管理平台</div><div class="alert has-ico bad" style="margin-top:18px"><${Icon} name="lock" /><div>${s.forbidden}</div></div><p class="muted small">管理端只允许从配置的管理网段访问（config.json → security.adminAllow）。</p></div></div>`;
 	if (s.user === undefined) return html`<div class="boot"><span class="spin"></span> 加载中…</div>`;
 	return html`${s.user ? html`<${Layout} route=${route} />` : html`<${Login} />`}<${ConfirmHost} /><${Toasts} />`;
 }

@@ -60,12 +60,13 @@ jobs:
         with:
           node-version: 26
 
-      - name: 版本号一致（package.json 与 src/app.js）
+      - name: 版本号一致（package.json、src/app.js 与 agent/agent.js）
         run: |
           pkg=$(node -p "require('./package.json').version")
           app=$(sed -n 's/^const VERSION = "\([^"]*\)";.*/\1/p' src/app.js)
-          if [ "$pkg" != "$app" ]; then
-            echo "::error file=src/app.js,title=版本号不一致::package.json 为 $pkg，src/app.js 为 $app"
+          agent=$(sed -n 's/^const VERSION = "\([^"]*\)";.*/\1/p' agent/agent.js)
+          if [ "$pkg" != "$app" ] || [ "$pkg" != "$agent" ]; then
+            echo "::error file=src/app.js,title=版本号不一致::package.json 为 $pkg，src/app.js 为 $app，agent/agent.js 为 $agent"
             exit 1
           fi
           echo "版本 $pkg"

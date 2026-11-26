@@ -10,11 +10,11 @@ const { sendJson, sendText } = require("./http.js");
 const { hashPassword, verifyPasswordAsync, checkPasswordPolicy, signJwt, verifyJwt, hasRole } = require("./auth.js");
 const { totpSecret, totpVerify, otpauthUrl, newApiToken } = require("./security.js");
 const { pathfind, coordinateConvert } = require("./tools.js");
-const { newId } = require("./util.js");
+const { newId, lanIPv4s, isLoopbackHost, ipInList } = require("./util.js");
 const { PROGRAM_ID_RE } = require("./store.js");
 
 function registerApi(router, ctx) {
-	const { store, scheduler, agents, signaling, metrics, settings, secrets, config, limiter, version, alerts, log, packages } = ctx;
+	const { store, scheduler, agents, signaling, metrics, settings, secrets, config, configCenter, limiter, version, alerts, log, packages } = ctx;
 	const audit = (req, action, target, detail) => store.audit({ username: req.user?.username || "", ip: req.clientIp, action, target, detail });
 	const httpErr = (status, message) => Object.assign(new Error(message), { status });
 	const ttlSec = () => Math.round((config.security.sessionTtlHours || 8) * 3600);
@@ -291,27 +291,56 @@ function registerApi(router, ctx) {
 		},
 		{ role: "admin" }
 	);
-	/** 渲染机访问平台管理口的地址：取管理员当前访问管理端所用的地址（渲染机与其同在内网） */
-	const adminOrigin = (req) => {
-		const host = req.headers.host || `127.0.0.1:${config.http.port}`;
+	/**
+	 * 渲染机访问平台管理口的地址：默认取管理员当前访问管理端所用的地址（渲染机与其同在内网）；
+	 * 「接入渲染机」中可改为其它地址（例如在服务器本机用 127.0.0.1 打开管理端时，渲染机无法使用该地址）。
+	 */
+	const HOST_RE = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*|\[[0-9a-f:.]+\])(?::(\d{1,5}))?$/i;
+	const normalizeHost = (value) => {
+		const s = String(value || "")
+			.trim()
+			.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "")
+			.replace(/\/.*$/, "");
+		const m = s.length <= 255 && s.match(HOST_RE);
+		if (!m) throw httpErr(400, "地址格式不正确：填写渲染机能访问的 IP 或域名，可带端口，例如 192.168.1.10:88");
+		if (m[1] && (+m[1] < 1 || +m[1] > 65535)) throw httpErr(400, "端口必须在 1–65535 之间");
+		return s.toLowerCase();
+	};
+	const adminOrigin = (req, override) => {
+		const host = override ? normalizeHost(override) : req.headers.host || `127.0.0.1:${config.http.port}`;
 		const tls = !!config.http.tls?.admin;
 		return { host, http: `${tls ? "https" : "http"}://${host}`, ws: `${tls ? "wss" : "ws"}://${host}` };
 	};
-	const downloadUrls = (req) => {
-		const o = adminOrigin(req);
+	/** 地址候选：当前访问地址、配置的 UE 连接地址、本机网卡地址（管理口端口） */
+	const hostCandidates = (req) => {
+		const out = [];
+		const add = (host, label) => {
+			if (!host) return;
+			host = String(host).toLowerCase();
+			if (!out.some((x) => x.host === host)) out.push({ host, label, loopback: isLoopbackHost(host) });
+		};
+		add(req.headers.host, "当前访问管理端的地址");
+		if (config.gateway.ueHost && config.gateway.ueHost !== "auto") add(config.gateway.ueHost, "配置的 UE 连接地址");
+		for (const a of lanIPv4s()) add(`${a.address}:${config.http.port}`, `本机网卡 ${a.name}`);
+		return out;
+	};
+	const downloadUrls = (req, override) => {
+		const o = adminOrigin(req, override);
 		return { windows: `${o.http}/download/agent/windows`, windowsExe: `${o.http}/download/agent/windows-exe`, linux: `${o.http}/download/agent/linux` };
 	};
 	router.get(
 		"/api/v1/agent-install",
-		async (req, res) => {
-			const o = adminOrigin(req);
+		async (req, res, { query }) => {
+			const o = adminOrigin(req, query.host);
 			const isAdmin = hasRole(req.user.role, "admin") && !req.user.token;
 			const tok = isAdmin ? secrets.agentToken : "<令牌（管理员可见）>";
-			const dl = downloadUrls(req);
+			const dl = downloadUrls(req, query.host);
 			const args = `--agent --url ${o.ws}/agent --token ${tok} --id render-01`;
 			sendJson(res, 200, {
 				url: `${o.ws}/agent`,
 				address: o.host,
+				loopback: isLoopbackHost(o.host),
+				hosts: hostCandidates(req),
 				token: isAdmin ? secrets.agentToken : null,
 				downloads: dl,
 				// 运行命令（在程序所在目录执行）。Windows 路径不要以 \ 结尾再加引号：\" 会被当成转义的引号
@@ -329,11 +358,11 @@ function registerApi(router, ctx) {
 	// Windows 安装链接：24 小时内在渲染机浏览器中打开即可下载已包含平台地址与接入令牌的安装程序
 	router.post(
 		"/api/v1/agent-setup-link",
-		async (req, res) => {
-			const o = adminOrigin(req);
+		async (req, res, { body }) => {
+			const o = adminOrigin(req, body?.host);
 			const ttl = 24 * 3600;
 			const k = signJwt({ typ: "agent-setup", ws: `${o.ws}/agent`, http: o.http, by: req.user.username }, secrets.jwt, ttl);
-			audit(req, "agent.setup_link");
+			audit(req, "agent.setup_link", o.host);
 			sendJson(res, 200, { url: `${o.http}/download/agent/windows-setup?k=${k}`, expiresAt: Date.now() + ttl * 1000, available: !!packages.resolve("windows") });
 		},
 		{ role: "admin", noToken: true }
@@ -342,7 +371,7 @@ function registerApi(router, ctx) {
 	/* ------------------------------------------------------- Agent 安装包 */
 	router.get(
 		"/api/v1/agent-packages",
-		async (req, res) => sendJson(res, 200, { ...packages.status(), downloads: downloadUrls(req) }),
+		async (req, res, { query }) => sendJson(res, 200, { ...packages.status(), downloads: downloadUrls(req, query.host) }),
 		{ role: "operator" }
 	);
 	router.put(
@@ -599,6 +628,38 @@ function registerApi(router, ctx) {
 		},
 		{ role: "admin", noToken: true }
 	);
+	/*
+	 * 系统参数（配置中心）：原来写在 config.json / 环境变量中的启动参数，改在管理端维护。
+	 * 读取需管理员；修改与恢复默认只允许管理员的登录会话（不可用 API 令牌），带版本号防止覆盖他人的修改，逐项记入审计。
+	 */
+	/** 保存前检查：修改「管理端允许访问的网段 / 可信反向代理」后，当前管理员是否仍能访问管理端 */
+	const configGuard = (req) => (next) => {
+		const sec = { ...config.security, adminAllow: next["security.adminAllow"], trustProxy: next["security.trustProxy"], lanNetworks: next["security.lanNetworks"] };
+		const info = signaling.resolveClient(req, false, sec);
+		if (ipInList(sec.adminAllow, info.ip) === false) throw httpErr(409, `保存后你当前的地址 ${info.ip} 将无法访问管理端：请把它（或所在网段）加入「管理端允许网段」，或检查「可信反向代理」`);
+	};
+	const auditConfig = (req, action, changes) => {
+		if (changes.length) audit(req, action, changes.map((c) => c.key).join(","), { changes: changes.map(({ key, from, to, apply }) => ({ key, from, to, apply })) });
+	};
+	router.get("/api/v1/config", async (req, res) => sendJson(res, 200, configCenter.view()), { role: "admin" });
+	router.put(
+		"/api/v1/config",
+		async (req, res, { body }) => {
+			const r = configCenter.update(body?.values, { rev: body?.rev, by: req.user.username, guard: configGuard(req) });
+			auditConfig(req, "config.update", r.changes);
+			sendJson(res, 200, { ...configCenter.view(), changes: r.changes });
+		},
+		{ role: "admin", noToken: true }
+	);
+	router.post(
+		"/api/v1/config/reset",
+		async (req, res, { body }) => {
+			const r = configCenter.reset(body?.keys, { rev: body?.rev, by: req.user.username, guard: configGuard(req) });
+			auditConfig(req, "config.reset", r.changes);
+			sendJson(res, 200, { ...configCenter.view(), changes: r.changes });
+		},
+		{ role: "admin", noToken: true }
+	);
 	router.post(
 		"/api/v1/alerts/test",
 		async (req, res) => {
@@ -620,7 +681,7 @@ function registerApi(router, ctx) {
 			const machines = store.listMachines().map(({ id, name, enabled, max_instances, tags, gpus_override }) => ({ id, name, enabled, max_instances, tags, gpus_override }));
 			const programs = store.listPrograms().map(({ created_at, updated_at, ...p }) => p);
 			audit(req, "backup.export");
-			sendJson(res, 200, { kind: "ps-platform-backup", version, exportedAt: Date.now(), programs, machines, settings: settings.view() }, { "Content-Disposition": `attachment; filename="ps-platform-backup-${new Date().toISOString().slice(0, 10)}.json"` });
+			sendJson(res, 200, { kind: "ps-platform-backup", version, exportedAt: Date.now(), programs, machines, settings: settings.view(), config: configCenter.exportValues() }, { "Content-Disposition": `attachment; filename="ps-platform-backup-${new Date().toISOString().slice(0, 10)}.json"` });
 		},
 		{ role: "admin" }
 	);
@@ -628,10 +689,12 @@ function registerApi(router, ctx) {
 		"/api/v1/restore",
 		async (req, res, { body }) => {
 			if (body?.kind !== "ps-platform-backup") throw httpErr(400, "不是有效的备份文件");
-			const result = { programs: 0, machines: 0, settings: false };
+			const result = { programs: 0, machines: 0, settings: false, config: 0, configSkipped: [] };
+			let configChanges = [];
 			if (!Array.isArray(body.programs || []) || !Array.isArray(body.machines || [])) throw httpErr(400, "备份文件格式错误");
 			// 整体在一个事务内导入：任何一项校验失败都不会留下"导入一半"的状态
-			store.transaction(() => {
+			try {
+				store.transaction(() => {
 				for (const p of body.programs || []) {
 					if (store.getProgram(p.id)) store.updateProgram(p.id, p);
 					else store.createProgram(p);
@@ -647,7 +710,18 @@ function registerApi(router, ctx) {
 					settings.update(body.settings);
 					result.settings = true;
 				}
-			});
+				if (body.config && typeof body.config === "object") {
+					const r = configCenter.importValues(body.config, { by: req.user.username, guard: configGuard(req) });
+					configChanges = r.changes;
+					result.config = r.changes.length;
+					result.configSkipped = r.skipped; // 环境变量锁定或本版本不认识的项
+				}
+				});
+			} catch (e) {
+				configCenter.load(); // 事务回滚：系统参数的内存状态与数据库重新同步
+				throw e;
+			}
+			auditConfig(req, "config.update", configChanges);
 			scheduler.loadPrograms();
 			audit(req, "backup.restore", "", result);
 			sendJson(res, 200, result);

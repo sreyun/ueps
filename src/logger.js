@@ -10,7 +10,7 @@ const util = require("util");
 const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 };
 
 function createLogger({ level = "info", dir = null, retentionDays = 14, bufferSize = 3000, console: toConsole = true } = {}) {
-	const min = LEVELS[level] ?? 20;
+	let min = LEVELS[level] ?? 20;
 	const buffer = [];
 	let seq = 0;
 	let day = "";
@@ -62,6 +62,16 @@ function createLogger({ level = "info", dir = null, retentionDays = 14, bufferSi
 		info: (...a) => write("info", a),
 		warn: (...a) => write("warn", a),
 		error: (...a) => write("error", a),
+		/** 运行中调整（管理端「系统参数」修改后立即生效） */
+		setLevel(lv) {
+			if (LEVELS[lv] !== undefined) min = LEVELS[lv];
+		},
+		setRetentionDays(n) {
+			if (n > 0) {
+				retentionDays = n;
+				if (dir) cleanup();
+			}
+		},
 		/** 管理端查询：level 以上、包含关键字、seq 之后 */
 		recent({ level: lv = "debug", q = "", after = 0, limit = 500 } = {}) {
 			const m = LEVELS[lv] ?? 10;

@@ -1,4 +1,4 @@
-import { html, usePoll, api, run, Card, Table, Badge, Modal, Field, fmt, useState, confirmDialog, ROLE_LABEL, useStore, AsyncButton } from "../lib.js";
+import { html, usePoll, api, run, Card, Table, Badge, Modal, Field, fmt, useState, confirmDialog, ROLE_LABEL, useStore, AsyncButton, Icon } from "../lib.js";
 
 export function Users() {
 	const list = usePoll(() => api("GET", "/users"), []);
@@ -13,7 +13,7 @@ export function Users() {
 	const resetTotp = (u) => act({ title: "重置两步验证", text: `确定重置 ${u.username} 的两步验证？其下次登录只需口令，并应尽快重新开启。`, okText: "重置" }, () => api("PUT", `/users/${u.id}`, { resetTotp: true }), "已重置");
 	const toggle = (u) => act(u.disabled ? null : { title: "禁用用户", text: `禁用后 ${u.username} 将立即被登出且无法登录。确定禁用？`, okText: "禁用" }, () => api("PUT", `/users/${u.id}`, { disabled: !u.disabled }), u.disabled ? "已启用" : "已禁用");
 	return html`
-		<${Card} title="用户" sub="管理员：全部权限 · 运维：程序、实例、机器、会话、访问链接 · 只读：仅查看" extra=${html`<button class="primary" onClick=${() => setEditing({})}>＋ 新建用户</button>`}>
+		<${Card} title="用户" sub="管理员：全部权限 · 运维：程序、实例、机器、会话、访问链接 · 只读：仅查看" extra=${html`<button class="primary" onClick=${() => setEditing({})}><${Icon} name="plus" />新建用户</button>`}>
 			<${Table}
 				rows=${list.data}
 				loading=${list.loading}

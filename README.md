@@ -63,28 +63,28 @@ flowchart TB
 | `ps-platform-agent-<版本>-linux-x64` | 渲染机 · Linux Agent 程序 |
 | `SHA256SUMS.txt` | 校验和 |
 
-Docker 镜像：`swr.cn-east-3.myhuaweicloud.com/sreyun/ps-platform:<版本>`（标签 `1.4.0` / `1.4` / `1` / `latest`）。
+Docker 镜像：`swr.cn-east-3.myhuaweicloud.com/sreyun/ps-platform:<版本>`（标签 `1.5.0` / `1.5` / `1` / `latest`）。
 
 ## 快速开始
 
 ### A. Linux 网关 + docker-compose（推荐）
 
 ```bash
-cd deploy && cp .env.example .env && vi .env     # 至少填写 LAN_IP、UE_SUBNETS；建议填写 PS_ADMIN_PASSWORD、PS_AGENT_TOKEN、TURN_SECRET
+cd deploy && cp .env.example .env && vi .env     # 建议填写 PS_ADMIN_PASSWORD、PS_AGENT_TOKEN、TURN_SECRET（网段等参数可在管理端维护）
 mkdir -p certs                                   # 可选：放入 fullchain.pem / privkey.pem 启用 https；没有证书时以仅 http 模式运行
-docker compose up -d --build                     # 或在 .env 设置 PS_IMAGE=swr.cn-east-3.myhuaweicloud.com/sreyun/ps-platform:1.4.0 后：
+docker compose up -d --build                     # 或在 .env 设置 PS_IMAGE=swr.cn-east-3.myhuaweicloud.com/sreyun/ps-platform:1.5.0 后：
                                                  #   docker compose pull platform && docker compose up -d --no-build
 docker compose ps                                # platform、nginx 均为 healthy
 ```
 
-- 管理端：`http://<LAN_IP>:88/admin/`（用户名 `admin`，仅内网）。观众：`http(s)://<域名或IP[:映射端口]>/`。
+- 管理端：`http://<网关内网 IP>:88/admin/`（用户名 `admin`，仅内网）。观众：`http(s)://<域名或IP[:映射端口]>/`。
 - 没有 UE 时先看效果：`docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d --build`（无头浏览器充当 UE，推送测试画面）。
 
 ### B. Windows / Linux 直接运行
 
 ```powershell
 # Windows（单机：UE 与平台在同一台电脑时，平台内置本机 Agent，无需另外接入）
-copy config.example.json config.json   # 修改 localAgent.allowExe 为 UE 所在目录
+copy config.example.json config.json   # 可选：端口等启动参数；UE 目录等在管理端「系统设置」中维护
 .\ps-platform.exe                       # 管理端 http://<本机IP>:88/admin/ ，初始口令见 data\initial-admin.txt
 ```
 
@@ -168,7 +168,7 @@ curl -fL -o ps-platform http://<网关>:88/download/agent/linux && chmod +x ps-p
 | `release.yml` | 推送 `v*` 标签 | 校验版本号 → 测试 → Windows / Linux 打包与冒烟测试 → 上传到 GitHub Release |
 | `docker.yml` | 推送 `v*` 标签 | 构建 amd64 + arm64 镜像，自检后推送华为云 SWR（需配置 `HW_ACCESS_KEY` / `HW_SECRET_KEY`） |
 
-发布新版本：修改 `package.json` 与 `src/app.js` 中的版本号，在 `CHANGELOG.md` 增加对应一节，推送 main 后打标签 `git tag -a v1.4.0 -m "ps-platform 1.4.0" && git push origin v1.4.0`。详见安装手册第 13 节。
+发布新版本：修改 `package.json`、`src/app.js` 与 `agent/agent.js` 中的版本号，在 `CHANGELOG.md` 增加对应一节，推送 main 后打标签 `git tag -a v1.5.0 -m "ps-platform 1.5.0" && git push origin v1.5.0`。详见安装手册第 13 节。
 
 ## 开发
 

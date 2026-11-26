@@ -1,5 +1,5 @@
 {
-	"_说明": "复制为 config.json（与 ps-platform.exe / server.js 同目录）后按需修改；未写的项使用默认值。完整说明见 docs/INSTALL.md 第 4 节。",
+	"_说明": "复制为 config.json（与 ps-platform.exe / server.js 同目录）。这里只需写启动参数（数据目录、端口、TLS）；localAgent、turn.builtin 等系统参数只在首次启动时作为初始值导入，之后在管理端「系统设置」维护。完整说明见 docs/INSTALL.md 第 6 节。",
 	"dataDir": "./data",
 	"http": {
 		"port": 88,
@@ -8,35 +8,15 @@
 		"publicHost": "127.0.0.1",
 		"tls": null
 	},
-	"gateway": {
-		"ueHost": "auto"
-	},
-	"security": {
-		"trustProxy": ["127.0.0.1", "::1"],
-		"adminAllow": ["127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
-		"engineAllow": ["127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
-		"lanNetworks": [],
-		"sessionTtlHours": 8
-	},
 	"localAgent": {
 		"enable": true,
-		"allowExe": ["D:\\UEProjects\\"],
-		"killOnStop": true
+		"allowExe": ["D:\\UEProjects"]
 	},
 	"turn": {
-		"forceRelay": false,
-		"servers": [],
 		"builtin": {
 			"enable": true,
-			"workers": "auto",
 			"listen": ["127.0.0.1:3478"],
-			"relayIp": "auto",
-			"minPort": 49160,
-			"maxPort": 50159,
-			"allowedPeers": ["127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
 			"httpFallback": "127.0.0.1:3480"
 		}
-	},
-	"history": { "retentionDays": 90 },
-	"log": { "level": "info", "retentionDays": 14, "file": true }
+	}
 }

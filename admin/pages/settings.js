@@ -1,4 +1,5 @@
-import { html, usePoll, api, run, Card, Field, Badge, Table, Modal, fmt, useState, useEffect, copyText, confirmDialog, ROLE_LABEL, Tabs, AsyncButton, store } from "../lib.js";
+import { html, usePoll, api, run, Card, Field, Badge, Table, Modal, fmt, useState, useEffect, useRef, useStore, copyText, confirmDialog, ROLE_LABEL, AsyncButton, store, Icon, toast } from "../lib.js";
+import { ConfigSection, BootstrapInfo } from "./sysconfig.js";
 
 const NEW_SERVER = { id: "", name: "", urls: [], secret: "", scope: "player", audience: "all", enable: true };
 const ALERT_EVENTS = {
@@ -12,23 +13,80 @@ const ALERT_EVENTS = {
 	"security.login_locked": "登录失败被锁定",
 };
 const list = (s) => String(s || "").split(/[,，\s]+/).filter(Boolean);
-const TABS = [
-	["access", "访问与嵌入"],
-	["ice", "播放链路"],
-	["security", "安全"],
-	["alerts", "告警通知"],
-	["tokens", "API 令牌"],
-	["backup", "备份与恢复"],
-	["system", "系统信息"],
+
+/** 设置分区：左侧分组菜单。cfg:* 为系统参数（配置中心）的分组 */
+const SECTIONS = [
+	{
+		group: "常用",
+		items: [
+			{ key: "access", label: "访问与嵌入", icon: "globe" },
+			{ key: "ice", label: "播放链路", icon: "activity" },
+			{ key: "alerts", label: "告警通知", icon: "alert" },
+		],
+	},
+	{
+		group: "安全与接入",
+		items: [
+			{ key: "security", label: "观众与接口安全", icon: "shield" },
+			{ key: "cfg:network", label: "网络与访问控制", icon: "lock" },
+		],
+	},
+	{
+		group: "运行参数",
+		items: [
+			{ key: "cfg:agent", label: "本机 Agent", icon: "server" },
+			{ key: "cfg:log", label: "日志与数据保留", icon: "terminal" },
+			{ key: "cfg:downloads", label: "Agent 安装包", icon: "download" },
+			{ key: "cfg:turn", label: "内置 TURN", icon: "wifi", advanced: true, desc: "须与 nginx 配置、防火墙端口一致，一般保持部署时的设置" },
+		],
+	},
+	{
+		group: "集成与维护",
+		items: [
+			{ key: "tokens", label: "API 令牌", icon: "key" },
+			{ key: "backup", label: "备份与恢复", icon: "upload" },
+			{ key: "system", label: "系统信息", icon: "info" },
+		],
+	},
 ];
+const ALL_SECTIONS = SECTIONS.flatMap((g) => g.items);
+const LEGACY_TAB = { sysconfig: "cfg:network" }; // 旧链接 #/settings?tab=sysconfig
 const SAVABLE = new Set(["access", "ice", "security", "alerts"]);
+/** 搜索索引：运行期设置等固定条目（系统参数的条目来自 /config） */
+const STATIC_INDEX = [
+	["access", "对外访问地址", "播放地址 嵌入 publicBaseUrl 域名"],
+	["ice", "强制只走 TURN 中继", "forceRelay 中继"],
+	["ice", "凭据有效期", "ttl UE 凭据"],
+	["ice", "单 IP 最多观众", "maxPlayersPerIp"],
+	["ice", "TURN / STUN 服务器", "ICE coturn 共享密钥 @builtin"],
+	["security", "观众 IP 白名单", "viewerAllow 白名单"],
+	["security", "允许跨域调用 API 的来源", "CORS corsOrigins"],
+	["security", "工具接口免登录", "寻路 坐标转换 publicTools"],
+	["security", "限流", "每秒 突发 rateLimit"],
+	["alerts", "告警 Webhook", "企业微信 钉钉 飞书 告警事件 排队"],
+	["tokens", "API 令牌", "二次开发 Bearer"],
+	["tokens", "单点登录", "SSO sso-link"],
+	["backup", "备份与恢复", "导出 导入 restore"],
+	["system", "启动参数", "端口 数据目录 TLS 证书 show-config 版本 日志目录"],
+];
+const initialSection = () => {
+	const t = location.hash.split("?tab=")[1] || "access";
+	const k = LEGACY_TAB[t] || t;
+	return ALL_SECTIONS.some((x) => x.key === k) ? k : "access";
+};
 
 export function Settings() {
+	const s = useStore();
 	const cfg = usePoll(() => api("GET", "/settings"), []);
-	const [tab, setTab] = useState(() => (location.hash.split("?tab=")[1] || "access"));
+	const [tab, setTab] = useState(initialSection);
+	const [conf, setConf] = useState(null);
+	const [q, setQ] = useState("");
+	const [flash, setFlash] = useState(null);
+	const goRef = useRef(null);
 	const [v, setV] = useState(null);
 	const [txt, setTxt] = useState({ viewerAllow: "", corsOrigins: "" });
 	const [base, setBase] = useState(null);
+	const [sysDirty, setSysDirty] = useState(false);
 	const load = (d) => {
 		const t = { viewerAllow: (d.security?.viewerAllow || []).join(", "), corsOrigins: (d.security?.corsOrigins || []).join(", ") };
 		setV(structuredClone(d));
@@ -42,6 +100,42 @@ export function Settings() {
 		window.addEventListener("beforeunload", warn);
 		return () => window.removeEventListener("beforeunload", warn);
 	}, [dirty]);
+	const loadConf = async () => {
+		try {
+			setConf(await api("GET", "/config"));
+		} catch (e) {
+			toast(`加载系统参数失败：${e.message}`, "bad");
+		}
+	};
+	useEffect(() => {
+		loadConf();
+	}, []);
+	// 其他管理员修改了系统参数（实时推送的版本号变化）：未编辑时自动刷新
+	const remoteRev = s.overview?.config?.rev;
+	const confStale = !!conf && remoteRev !== undefined && remoteRev !== conf.rev;
+	useEffect(() => {
+		if (confStale && !sysDirty) loadConf();
+	}, [confStale, sysDirty]);
+	useEffect(() => {
+		const h = `#/settings?tab=${tab}`;
+		if (location.hash !== h) history.replaceState(null, "", h);
+	}, [tab]);
+	// 已在本页时点击「#/settings?tab=…」链接（例如顶部的待重启提示）：切换到对应分区
+	useEffect(() => {
+		const f = () => {
+			const k = initialSection();
+			if (k !== tab) goRef.current ? goRef.current(k) : setTab(k);
+		};
+		window.addEventListener("hashchange", f);
+		return () => window.removeEventListener("hashchange", f);
+	});
+	// 搜索结果跳转：滚动到该项并短暂高亮
+	useEffect(() => {
+		if (!flash) return;
+		const t1 = setTimeout(() => document.querySelector(`[data-key="${flash}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" }), 60);
+		const t2 = setTimeout(() => setFlash(null), 2200);
+		return () => (clearTimeout(t1), clearTimeout(t2));
+	}, [flash, tab, conf]);
 	if (cfg.error && !v) return html`<div class="alert bad">加载设置失败：${cfg.error}</div>`;
 	if (!v) return html`<div class="boot"><span class="spin"></span> 加载中…</div>`;
 	const t = v.turn;
@@ -61,27 +155,61 @@ export function Settings() {
 			store.set({ publicBaseUrl: r.publicBaseUrl || "" });
 		}
 	};
-	const switchTab = async (k) => {
-		if (dirty && SAVABLE.has(tab) && !SAVABLE.has(k) && !(await confirmDialog({ title: "有未保存的修改", text: "当前设置有未保存的修改，切换后修改仍会保留，但需要回到前面的选项卡保存才会生效。继续？", okText: "继续", danger: false }))) return;
-		setTab(k);
+	const go = async (k, key) => {
+		if (k !== tab) {
+			if (tab.startsWith("cfg:") && sysDirty && !(await confirmDialog({ title: "放弃未保存的修改", text: `「${ALL_SECTIONS.find((x) => x.key === tab).label}」有未保存的修改，切换后将丢弃。继续？`, okText: "丢弃并切换" }))) return;
+			if (dirty && SAVABLE.has(tab) && !SAVABLE.has(k) && !(await confirmDialog({ title: "有未保存的修改", text: "当前设置有未保存的修改，切换后修改仍会保留，但需要回到原来的分区保存才会生效。继续？", okText: "继续", danger: false }))) return;
+			setSysDirty(false);
+			setTab(k);
+		}
+		setQ("");
+		setFlash(key || null);
 	};
-	return html`
-		<${Tabs} tabs=${TABS.map(([k, l]) => [k, l, dirty && SAVABLE.has(k) && k === tab ? "未保存" : ""])} value=${tab} onChange=${switchTab} />
+	goRef.current = go;
+	const cur = ALL_SECTIONS.find((x) => x.key === tab) || ALL_SECTIONS[0];
+	const pendingIn = (key) => (key.startsWith("cfg:") && conf ? conf.items.filter((i) => i.group === key.slice(4) && i.pending).length : 0);
+	const index = [...STATIC_INDEX.map(([section, label, kw]) => ({ section, label, text: `${label} ${kw}` })), ...(conf?.items || []).map((i) => ({ section: `cfg:${i.group}`, label: i.label, key: i.key, text: `${i.label} ${i.hint} ${i.help} ${i.key} ${i.env || ""}` }))];
+	const needle = q.trim().toLowerCase();
+	const results = needle ? index.filter((e) => e.text.toLowerCase().includes(needle)).slice(0, 30) : null;
+	const navItem = (it) => {
+		const p = pendingIn(it.key);
+		const unsaved = it.key === tab && ((SAVABLE.has(it.key) && dirty) || (it.key.startsWith("cfg:") && sysDirty));
+		return html`<button type="button" class=${"snav-i" + (tab === it.key ? " on" : "")} aria-current=${tab === it.key ? "page" : undefined} onClick=${() => go(it.key)}>
+			<${Icon} name=${it.icon} size=${16} /><span class="grow">${it.label}</span>
+			${it.advanced && html`<span class="set-tag">高级</span>`}
+			${p ? html`<em class="pill warn" title="已保存、重启平台后生效的项">${p}</em>` : unsaved ? html`<i class="unsaved" title="有未保存的修改"></i>` : ""}
+		</button>`;
+	};
+	return html`<div class="settings">
+		<aside class="snav">
+			<label class="snav-search"><${Icon} name="search" size=${15} /><input type="search" placeholder="搜索设置项…" value=${q} onInput=${(e) => setQ(e.target.value)} aria-label="搜索设置项" /></label>
+			<select class="snav-select" value=${tab} aria-label="设置分区" onChange=${(e) => go(e.target.value)}>
+				${SECTIONS.map((g) => html`<optgroup label=${g.group}>${g.items.map((it) => html`<option value=${it.key}>${it.label}${pendingIn(it.key) ? "（待重启）" : ""}</option>`)}</optgroup>`)}
+			</select>
+			${results
+				? html`<div class="snav-results">
+						${results.length
+							? results.map((r) => html`<button type="button" class="snav-r" onClick=${() => go(r.section, r.key)}><span>${r.label}</span><small>${ALL_SECTIONS.find((x) => x.key === r.section)?.label}</small></button>`)
+							: html`<div class="faint small snav-none">没有匹配的设置项</div>`}
+					</div>`
+				: SECTIONS.map((g) => html`<div class="snav-g">${g.group}</div>${g.items.map(navItem)}`)}
+		</aside>
+		<section class="settings-main">
+			<header class="settings-head">
+				<h2>${cur.label}${cur.advanced ? html` <span class="set-tag">高级</span>` : ""}</h2>
+				${cur.desc && html`<p>${cur.desc}</p>`}
+			</header>
 		${tab === "access" &&
-		html`<${Card} title="对外访问地址" sub="观众访问 nginx 的地址：生成播放地址、访问链接、嵌入代码时使用">
+		html`<${Card}>
 			<div class="narrow" style="max-width:640px">
-				<${Field} label="对外访问地址" hint="http(s)://域名或IP[:端口]，不带路径。例如 https://ue.example.com:8443 或 http://203.0.113.10:61556。留空则使用管理口地址（外网无法访问）" error=${v.publicBaseUrl && !/^https?:\/\/[^/\s?#]+\/?$/i.test(v.publicBaseUrl.trim()) ? "格式应为 http(s)://主机[:端口]" : ""}>
+				<${Field} label="对外访问地址" hint="观众访问 nginx 的地址，不带路径；留空 = 使用管理口地址（外网无法访问）" error=${v.publicBaseUrl && !/^https?:\/\/[^/\s?#]+\/?$/i.test(v.publicBaseUrl.trim()) ? "格式应为 http(s)://主机[:端口]" : ""}>
 					<input value=${v.publicBaseUrl || ""} placeholder="https://ue.example.com:8443" onInput=${(e) => setV({ ...v, publicBaseUrl: e.target.value })} />
 				<//>
-				<p class="muted small">播放地址格式与企业版兼容：<code>/video.html?urlPrefix=程序ID</code>；也可用 <code>/play/程序ID</code>。同一个对外端口同时支持 http:// 与 https://。业务系统是 https 页面时，请填写 https 地址并使用受信任证书。</p>
+				<p class="faint small">播放地址：<code>/play/程序ID</code> 或 <code>/video.html?urlPrefix=程序ID</code></p>
 			</div>
 		<//>`}
 		${tab === "ice" &&
-		html`<${Card} title="ICE / TURN（播放链路）">
-			<p class="muted small">
-				浏览器与 UE 自动在多条路径中择优：内网直连 → 数据中心 TURN（UDP）→ nginx 同端口 TURN（TCP/TLS）。地址中的 <code>{host}</code>/<code>{port}</code>
-				会替换为观众访问 nginx 时使用的地址；密钥填 <code>@builtin</code> 表示使用内置 TURN 的密钥。修改后对新连接的观众生效，已运行的 UE 实例需重启后才会使用新的 UE 专用配置。
-			</p>
+		html`<${Card}>
 			<div class="form-grid">
 				<${Field} label="强制只走 TURN 中继">
 					<select value=${String(t.forceRelay)} onChange=${(e) => setTurn({ forceRelay: e.target.value === "true" ? true : e.target.value === "false" ? false : "external" })}>
@@ -96,7 +224,7 @@ export function Settings() {
 					<${Field} label="单 IP 最多观众" hint="0 = 不限"><input type="number" min="0" value=${v.maxPlayersPerIp} onInput=${(e) => setV({ ...v, maxPlayersPerIp: Math.max(0, Math.floor(+e.target.value) || 0) })} /><//>
 				</div>
 			</div>
-			<h4>TURN / STUN 服务器</h4>
+			<h4>TURN / STUN 服务器 <span class="set-help" tabindex="0" title="浏览器与 UE 自动择优：内网直连 → 数据中心 TURN → nginx 同端口 TURN。{host}/{port} 替换为观众访问的地址；密钥 @builtin = 内置 TURN。修改后对新连接生效，UE 专用配置需重启实例"><${Icon} name="info" size=${13} /></span></h4>
 			${t.servers.map(
 				(s, i) => html`<div class="server" key=${i}>
 					<div class="server-h">
@@ -111,41 +239,40 @@ export function Settings() {
 						<span class="grow"></span>
 						<button class="danger sm" onClick=${async () => (await confirmDialog({ title: "删除服务器", text: `删除「${s.name || s.id || "未命名"}」？保存后生效。`, okText: "删除" })) && setTurn({ servers: t.servers.filter((_, j) => j !== i) })}>删除</button>
 					</div>
-					${s.scope === "ue" && (s.urls || []).some((u) => !/127\.0\.0\.1|localhost|\{host\}/.test(u)) && html`<div class="alert warn">UE 专用 TURN 的地址必须是 UE 能直接访问到的 TURN 监听地址。内置 TURN 只监听 127.0.0.1，与 UE 同机时应为 <code>turn:127.0.0.1:端口</code>；内网真实 UE 通常不需要这一项。</div>`}
-					<${Field} label="地址（每行一个）" hint="例：turn:{host}:{port}?transport=tcp、turns:turn.dc.com:443?transport=tcp、stun:turn.dc.com:3478">
-						<textarea rows="3" value=${(s.urls || []).join("\n")} onInput=${(e) => setServer(i, { urls: e.target.value.split(/\s+/).filter(Boolean) })}></textarea>
+					${s.scope === "ue" && (s.urls || []).some((u) => !/127\.0\.0\.1|localhost|\{host\}/.test(u)) && html`<div class="alert warn">UE 必须能直接访问此地址（与 UE 同机时用 <code>turn:127.0.0.1:端口</code>）；内网 UE 通常不需要。</div>`}
+					<${Field} label="地址（每行一个）">
+						<textarea rows="3" placeholder=${"turn:{host}:{port}?transport=tcp\nstun:turn.example.com:3478"} value=${(s.urls || []).join("\n")} onInput=${(e) => setServer(i, { urls: e.target.value.split(/\s+/).filter(Boolean) })}></textarea>
 					<//>
-					<${Field} label="共享密钥（TURN REST API / coturn static-auth-secret）" hint="****** = 保持不变；@builtin = 内置 TURN">
+					<${Field} label="共享密钥" hint="****** = 不变；@builtin = 内置 TURN">
 						<input value=${s.secret || ""} autocomplete="off" onInput=${(e) => setServer(i, { secret: e.target.value })} />
 					<//>
 				</div>`
 			)}
-			<button class="ghost" onClick=${() => setTurn({ servers: [...t.servers, { ...NEW_SERVER }] })}>＋ 添加服务器</button>
+			<button class="ghost" onClick=${() => setTurn({ servers: [...t.servers, { ...NEW_SERVER }] })}><${Icon} name="plus" />添加服务器</button>
 		<//>`}
 		${tab === "security" &&
-		html`<${Card} title="安全">
+		html`<${Card}>
 			<div class="form-grid">
-				<${Field} label="观众 IP 白名单（所有程序）" hint="逗号分隔的 IP/网段，空 = 不限；程序上还可单独设置">
+				<${Field} label="观众 IP 白名单">
 					<input value=${txt.viewerAllow} placeholder="不限" onInput=${(e) => setTxt({ ...txt, viewerAllow: e.target.value })} />
 				<//>
-				<${Field} label="允许跨域调用 API 的来源（CORS）" hint="配合 API 令牌做二次开发，例如 https://app.example.com；空 = 不允许跨域">
-					<input value=${txt.corsOrigins} placeholder="不允许" onInput=${(e) => setTxt({ ...txt, corsOrigins: e.target.value })} />
+				<${Field} label="跨域来源（CORS）">
+					<input value=${txt.corsOrigins} placeholder="不允许，例如 https://app.example.com" onInput=${(e) => setTxt({ ...txt, corsOrigins: e.target.value })} />
 				<//>
-				<label class="check"><input type="checkbox" checked=${!!sec.publicTools} onChange=${(e) => setSec({ publicTools: e.target.checked })} /> 寻路 / 坐标转换工具接口免登录开放（观众口也可调用）</label>
+				<label class="check"><input type="checkbox" checked=${!!sec.publicTools} onChange=${(e) => setSec({ publicTools: e.target.checked })} /> 寻路 / 坐标转换接口免登录</label>
 			</div>
-			<h4>限流（每个来源 IP）</h4>
+			<h4>每 IP 限流 <span class="faint small">0 = 不限</span></h4>
 			<div class="row3 four">
 				<${Field} label="观众连接每秒新建"><input type="number" min="0" value=${sec.rateLimit.wsPerSec} onInput=${(e) => setRl("wsPerSec", e.target.value)} /><//>
 				<${Field} label="观众连接突发上限"><input type="number" min="0" value=${sec.rateLimit.wsBurst} onInput=${(e) => setRl("wsBurst", e.target.value)} /><//>
 				<${Field} label="API 每秒请求"><input type="number" min="0" value=${sec.rateLimit.apiPerSec} onInput=${(e) => setRl("apiPerSec", e.target.value)} /><//>
 				<${Field} label="API 突发上限"><input type="number" min="0" value=${sec.rateLimit.apiBurst} onInput=${(e) => setRl("apiBurst", e.target.value)} /><//>
 			</div>
-			<p class="muted small">0 = 不限。企业 NAT 下几十人共用一个出口 IP，观众连接限流不宜过严。前面还有一层反向代理时，请在部署配置中把它加入可信代理（UPSTREAM_PROXIES），否则所有观众会被当成同一个 IP。</p>
-		<//>`}
+			<//>`}
 		${tab === "alerts" &&
-		html`<${Card} title="告警通知" extra=${html`<${AsyncButton} class="ghost" disabled=${dirty || !al.webhook} title=${dirty ? "请先保存" : ""} onClick=${() => run(() => api("POST", "/alerts/test"), "测试消息已发送，请在群里查看")}>发送测试消息<//>`}>
+		html`<${Card} title="Webhook" extra=${html`<${AsyncButton} class="ghost" disabled=${dirty || !al.webhook} title=${dirty ? "请先保存" : ""} onClick=${() => run(() => api("POST", "/alerts/test"), "测试消息已发送，请在群里查看")}>发送测试消息<//>`}>
 			<div class="form-grid">
-				<${Field} label="Webhook 地址" hint="企业微信 / 钉钉 / 飞书群机器人地址，或任意接收 JSON 的地址；留空 = 不发送"><input value=${al.webhook} placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…" onInput=${(e) => setAl({ webhook: e.target.value.trim() })} /><//>
+				<${Field} label="地址" hint="留空 = 不发送"><input value=${al.webhook} placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…" onInput=${(e) => setAl({ webhook: e.target.value.trim() })} /><//>
 				<div class="row3">
 					<${Field} label="格式">
 						<select value=${al.format} onChange=${(e) => setAl({ format: e.target.value })}>
@@ -163,22 +290,28 @@ export function Settings() {
 				)}
 			</div>
 		<//>`}
-		${tab === "tokens" && html`<${ApiTokens} />`}
-		${tab === "backup" && html`<${Backup} onRestored=${cfg.reload} />`}
-		${tab === "system" && html`<${SystemInfo} />`}
-		${SAVABLE.has(tab) &&
-		html`<div class="savebar">
-			<span class=${dirty ? "text-warn small" : "muted small"}>${dirty ? "有未保存的修改" : "所有修改已保存"}</span>
-			${dirty && html`<button class="ghost" onClick=${() => load(cfg.data)}>撤销修改</button>`}
-			<${AsyncButton} class="primary" disabled=${!dirty || badBase} title=${badBase ? "对外访问地址格式不正确" : ""} onClick=${save}>保存设置<//>
-		</div>`}
-	`;
+			${tab.startsWith("cfg:") &&
+			(conf
+				? html`<${ConfigSection} data=${conf} group=${tab.slice(4)} onSaved=${setConf} onDirty=${setSysDirty} highlight=${flash} stale=${confStale} onReload=${loadConf} />`
+				: html`<div class="boot"><span class="spin"></span> 加载中…</div>`)}
+			${tab === "tokens" && html`<${ApiTokens} />`}
+			${tab === "backup" && html`<${Backup} onRestored=${() => (cfg.reload(), loadConf())} />`}
+			${tab === "system" && html`<${SystemInfo} />${conf && html`<h3 class="set-sub">启动参数（只读）</h3><${BootstrapInfo} data=${conf} />`}`}
+			${SAVABLE.has(tab) &&
+			dirty &&
+			html`<div class="savebar">
+				<span class="text-warn small">有未保存的修改</span>
+				<button class="ghost" onClick=${() => load(cfg.data)}>撤销修改</button>
+				<${AsyncButton} class="primary" disabled=${!dirty || badBase} title=${badBase ? "对外访问地址格式不正确" : ""} onClick=${save}>保存设置<//>
+			</div>`}
+		</section>
+	</div>`;
 }
 
 function SystemInfo() {
 	const sys = usePoll(() => api("GET", "/system"), [], 10000);
 	const st = sys.data;
-	return html`<${Card} title="系统信息">
+	return html`<${Card}>
 		${!st
 			? html`<div class="boot"><span class="spin"></span></div>`
 			: html`<div class="kv">
@@ -203,8 +336,8 @@ function ApiTokens() {
 		if (!(await confirmDialog({ title: "吊销令牌", text: `确定吊销令牌「${t.name}」？使用它的系统将立即无法访问。`, okText: "吊销" }))) return;
 		if (await run(() => api("DELETE", `/api-tokens/${t.id}`), "已吊销")) tokens.reload();
 	};
-	return html`<${Card} title="API 令牌（二次开发）" extra=${html`<button class="primary" onClick=${() => setCreating(true)}>＋ 新建令牌</button>`}>
-		<p class="muted small">业务系统用请求头 <code>Authorization: Bearer 令牌</code> 调用 <code>/api/v1/*</code>（需在管理网段内，或配置 CORS 来源），接口说明见 docs/API.md。令牌不能修改用户、口令和系统设置。</p>
+	return html`<${Card} title="API 令牌（二次开发）" extra=${html`<button class="primary" onClick=${() => setCreating(true)}><${Icon} name="plus" />新建令牌</button>`}>
+		<p class="faint small">请求头 <code>Authorization: Bearer 令牌</code> 调用 <code>/api/v1/*</code>，说明见 docs/API.md。</p>
 		<${Table}
 			rows=${tokens.data}
 			loading=${tokens.loading}
@@ -289,7 +422,7 @@ function Backup({ onRestored }) {
 		}
 	};
 	return html`<${Card} title="备份与恢复">
-		<p class="muted small">导出程序、机器与系统设置（不含用户、口令、密钥）。迁移或重装后导入即可恢复配置。也可直接备份数据目录。</p>
+		<p class="faint small">导出程序、机器、系统设置与系统参数（不含用户、口令与密钥）。</p>
 		<div class="card-actions">
 			<${AsyncButton} class="primary" onClick=${download}>导出配置<//>
 			<label class="btn ghost">导入配置<input type="file" accept="application/json,.json" hidden onChange=${upload} /></label>

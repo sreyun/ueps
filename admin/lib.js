@@ -1,6 +1,7 @@
 // 管理端公共库：API、全局状态、格式化、通用组件
 import { html, useState, useEffect, useRef, useMemo } from "./vendor/preact-htm.js";
-export { html, useState, useEffect, useRef, useMemo };
+import { Icon } from "./icons.js";
+export { html, useState, useEffect, useRef, useMemo, Icon };
 
 /* ------------------------------------------------------------------ API */
 export class ApiError extends Error {
@@ -190,7 +191,7 @@ export function ConfirmHost() {
 }
 
 /* ------------------------------------------------------------------ 组件 */
-export const Badge = ({ tone = "muted", children, title }) => html`<span class="badge ${tone}" title=${title}>${children}</span>`;
+export const Badge = ({ tone = "muted", children, title, class: cls = "" }) => html`<span class="badge ${tone} ${cls}" title=${title}>${children}</span>`;
 export const StateBadge = ({ state }) => html`<${Badge} tone=${STATE_TONE[state] || "muted"}>${STATE_LABEL[state] || state}<//>`;
 
 export function Card({ title, extra, children, class: cls = "", sub }) {
@@ -204,8 +205,8 @@ export function Card({ title, extra, children, class: cls = "", sub }) {
 	</section>`;
 }
 
-export function Kpi({ label, value, sub, tone = "", href }) {
-	const body = html`<div class="kpi-l">${label}</div><div class="kpi-v">${value}</div>${sub && html`<div class="kpi-s">${sub}</div>`}`;
+export function Kpi({ label, value, sub, tone = "", href, icon, color = "" }) {
+	const body = html`<div class="kpi-top"><div class="kpi-l">${label}</div>${icon && html`<span class="kpi-ico ${color}"><${Icon} name=${icon} size=${17} /></span>`}</div><div class="kpi-v">${value}</div>${sub && html`<div class="kpi-s">${sub}</div>`}`;
 	return href ? html`<a class="kpi link ${tone}" href=${href}>${body}</a>` : html`<div class="kpi ${tone}">${body}</div>`;
 }
 
@@ -215,8 +216,14 @@ export function Bar({ value, max = 100, tone }) {
 	return html`<div class="bar"><i class=${t} style=${`width:${pct}%`}></i></div>`;
 }
 
-export function Empty({ children = "暂无数据", action }) {
-	return html`<div class="empty"><div>${children}</div>${action && html`<div class="empty-a">${action}</div>`}</div>`;
+export function Empty({ children = "暂无数据", action, icon = "box" }) {
+	return html`<div class="empty"><span class="empty-i"><${Icon} name=${icon} size=${22} /></span><div>${children}</div>${action && html`<div class="empty-a">${action}</div>`}</div>`;
+}
+
+/** 带图标的提示框：tone = info / warn / bad / ok */
+const ALERT_ICON = { info: "info", warn: "alert", bad: "xCircle", ok: "checkCircle" };
+export function Alert({ tone = "info", children, class: cls = "" }) {
+	return html`<div class="alert has-ico ${tone} ${cls}"><${Icon} name=${ALERT_ICON[tone] || "info"} size=${16} /><div>${children}</div></div>`;
 }
 
 export function Table({ columns, rows, empty, rowKey = (r) => r.id, loading }) {
@@ -228,7 +235,7 @@ export function Table({ columns, rows, empty, rowKey = (r) => r.id, loading }) {
 	</table></div>`;
 }
 
-export function Modal({ title, onClose, children, footer, wide, onSubmit }) {
+export function Modal({ title, sub, onClose, children, footer, wide, onSubmit }) {
 	useEffect(() => {
 		const k = (e) => e.key === "Escape" && onClose();
 		window.addEventListener("keydown", k);
@@ -239,7 +246,7 @@ export function Modal({ title, onClose, children, footer, wide, onSubmit }) {
 		};
 	}, []);
 	const body = html`
-		<header><h3>${title}</h3><button type="button" class="icon" onClick=${onClose} aria-label="关闭">✕</button></header>
+		<header><div><h3>${title}</h3>${sub && html`<div class="modal-sub">${sub}</div>`}</div><button type="button" class="icon" onClick=${onClose} aria-label="关闭" title="关闭（Esc）"><${Icon} name="x" size=${18} /></button></header>
 		<div class="modal-b">${children}</div>
 		${footer && html`<footer>${footer}</footer>`}`;
 	return html`<div class="modal-bg" onMouseDown=${(e) => e.target === e.currentTarget && onClose()}>
@@ -268,7 +275,7 @@ export function AsyncButton({ onClick, children, class: cls = "", disabled, type
 /** 选项卡 */
 export function Tabs({ tabs, value, onChange }) {
 	return html`<div class="tabs" role="tablist">
-		${tabs.map(([k, label, badge]) => html`<button type="button" role="tab" class=${value === k ? "on" : ""} aria-selected=${value === k} onClick=${() => onChange(k)}>${label}${badge ? html` <em>${badge}</em>` : ""}</button>`)}
+		${tabs.map(([k, label, badge, icon]) => html`<button type="button" role="tab" class=${value === k ? "on" : ""} aria-selected=${value === k} onClick=${() => onChange(k)}>${icon && html`<${Icon} name=${icon} size=${15} />`}${label}${badge ? html` <em>${badge}</em>` : ""}</button>`)}
 	</div>`;
 }
 
@@ -278,7 +285,29 @@ export function Field({ label, hint, children, error, class: cls = "" }) {
 
 /** 可复制的一行文本 */
 export function CopyLine({ value, label }) {
-	return html`<div class="copyline">${label && html`<span class="copyline-l">${label}</span>`}<code title=${value}>${value}</code><button type="button" class="ghost sm" onClick=${() => copyText(value)}>复制</button></div>`;
+	return html`<div class="copyline">${label && html`<span class="copyline-l">${label}</span>`}<code title=${value}>${value}</code><${CopyButton} value=${value} /></div>`;
+}
+
+/** 复制按钮：复制成功后短暂显示"已复制"。value 可为函数（点击时取值） */
+export function CopyButton({ value, label = "复制", class: cls = "sm", disabled, title }) {
+	const [done, setDone] = useState(false);
+	const t = useRef(0);
+	useEffect(() => () => clearTimeout(t.current), []);
+	const click = async () => {
+		const v = typeof value === "function" ? await value() : value;
+		if (!v) return;
+		if (await copyText(v, { quiet: true })) {
+			setDone(true);
+			clearTimeout(t.current);
+			t.current = setTimeout(() => setDone(false), 1600);
+		}
+	};
+	return html`<button type="button" class=${cls} disabled=${disabled} onClick=${click} title=${title || "复制到剪贴板"}><${Icon} name=${done ? "check" : "copy"} size=${14} />${label && (done ? "已复制" : label)}</button>`;
+}
+
+/** 命令 / 代码块：右上角复制 */
+export function Cmd({ code, label }) {
+	return html`${label && html`<div class="cmd-label">${label}</div>`}<div class="cmd"><pre class="code">${code}</pre><span class="cmd-copy"><${CopyButton} value=${code} /></span></div>`;
 }
 
 /** 受控表单状态 */
@@ -325,13 +354,13 @@ export function LineChart({ points = [], series, height = 160, format = (v) => v
 			: html`<svg width=${w} height=${height} onMouseMove=${onMove} onMouseLeave=${() => setHover(null)}>
 					${ticks.map((t) => html`<g><line x1=${pad.l} x2=${w - pad.r} y1=${y(t)} y2=${y(t)} class="grid" /><text x=${pad.l - 6} y=${y(t) + 4} text-anchor="end" class="tick">${format(t)}</text></g>`)}
 					${series.map(
-						(s) => html`<path d=${points.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p[s.key]).toFixed(1)}`).join("")} fill="none" stroke=${s.color} stroke-width="2" stroke-linejoin="round" />`
+						(s) => html`<path d=${points.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p[s.key]).toFixed(1)}`).join("")} fill="none" style=${`stroke:${s.color}`} stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />`
 					)}
 					<text x=${pad.l} y=${height - 4} class="tick">${fmt.clock(points[0].t)}</text>
 					<text x=${w - pad.r} y=${height - 4} text-anchor="end" class="tick">${fmt.clock(points[points.length - 1].t)}</text>
 					${hover !== null &&
 					html`<g><line x1=${x(hover)} x2=${x(hover)} y1=${pad.t} y2=${pad.t + ih} class="cursor" />
-						${series.map((s) => html`<circle cx=${x(hover)} cy=${y(points[hover][s.key])} r="3.5" fill=${s.color} />`)}</g>`}
+						${series.map((s) => html`<circle cx=${x(hover)} cy=${y(points[hover][s.key])} r="4" style=${`fill:${s.color};stroke:var(--surface);stroke-width:2`} />`)}</g>`}
 				</svg>
 				<div class="legend">
 					${series.map((s) => html`<span><i style=${`background:${s.color}`}></i>${s.label}${hover !== null ? `：${format(points[hover][s.key] || 0)}` : ""}</span>`)}
@@ -341,7 +370,11 @@ export function LineChart({ points = [], series, height = 160, format = (v) => v
 }
 
 /** 复制到剪贴板：http 访问管理端时 navigator.clipboard 不可用，退回 execCommand */
-export function copyText(text) {
+export function copyText(text, { quiet = false } = {}) {
+	const note = (ok) => {
+		if (!quiet || !ok) ok ? toast("已复制") : toast("复制失败，请手动选中复制", "warn");
+		return ok;
+	};
 	const fallback = () => {
 		const ta = document.createElement("textarea");
 		ta.value = text;
@@ -354,10 +387,10 @@ export function copyText(text) {
 			ok = document.execCommand("copy");
 		} catch {}
 		ta.remove();
-		ok ? toast("已复制") : toast("复制失败，请手动选中复制", "warn");
+		return note(ok);
 	};
-	if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(() => toast("已复制"), fallback);
-	else fallback();
+	if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text).then(() => note(true), fallback);
+	return Promise.resolve(fallback());
 }
 
 /** 下载文件（带会话 Cookie） */

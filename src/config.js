@@ -151,6 +151,8 @@ function loadConfig({ baseDir, file, env = process.env, overrides } = {}) {
 		for (const k of ["cert", "key"]) if (!fs.existsSync(merged.http.tls[k])) throw new Error(`配置错误：http.tls.${k} 文件不存在：${merged.http.tls[k]}`);
 	}
 	merged.configFile = cfgFile;
+	// config.json 的原始内容（加上程序传入的 overrides）：配置中心据此判断托管参数是否来自文件（升级时导入一次）
+	Object.defineProperty(merged, "fileValues", { value: overrides ? merge(fromFile, overrides) : fromFile, enumerable: false });
 	return validate(merged);
 }
 

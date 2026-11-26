@@ -36,8 +36,8 @@ curl -H "Authorization: Bearer $TOKEN" http://192.168.1.10:88/api/v1/overview
 | POST | `/instances/:id/stop` · `/instances/:id/drain` | operator | 停止 / 排空 |
 | GET | `/machines` | viewer | 机器与 GPU |
 | PUT/DELETE | `/machines/:id` | operator / admin | `{name,enabled,max_instances,tags,gpus_override}` / 删除离线机器 |
-| GET | `/agent-install` | operator | Agent 接入信息与命令（令牌仅管理员可见）：`downloads`、`windows` / `linux`（运行命令）、`windowsDownload` / `linuxDownload`（下载命令）、`windowsSilent`（静默安装） |
-| POST | `/agent-setup-link` | admin（不可用 API 令牌） | 生成 Windows 安装链接 `{url, expiresAt, available}`，24 小时有效；下载的安装程序附带平台地址与当前接入令牌 |
+| GET | `/agent-install?host=` | operator | Agent 接入信息与命令（令牌仅管理员可见）：`address`（渲染机访问平台的地址）、`url`（Agent 连接地址）、`token`、`loopback`（是否回环地址，渲染机无法使用）、`hosts`（地址候选 `[{host,label,loopback}]`：当前访问地址、配置的 UE 连接地址、本机网卡）、`downloads`、`windows` / `linux`（运行命令）、`windowsDownload` / `linuxDownload`（下载命令）、`windowsSilent`（静默安装）。`host` 可指定其它地址（IP 或域名，可带端口；协议与路径会被去掉），格式错误返回 400 |
+| POST | `/agent-setup-link` | admin（不可用 API 令牌） | 生成 Windows 安装链接 `{url, expiresAt, available}`，24 小时有效；请求体 `{host}` 可选，指定渲染机访问平台的地址（同上）。下载的安装程序附带该地址与**下载时**的接入令牌（轮换令牌后已生成的链接仍可用，附带新令牌） |
 | GET | `/agent-packages` | operator | Agent 安装包状态：`targets.windows`（图形安装程序）/ `targets.linux`（Agent 程序）的来源、版本、大小、SHA256、获取任务进度 |
 | PUT | `/agent-packages/:target` | admin | 上传安装包（请求体为文件原始内容，`Content-Type: application/octet-stream`，上限 512MB）；校验文件类型，Windows 必须是含 Agent 的安装程序 |
 | POST | `/agent-packages/:target/fetch` | admin | 后台从发布页获取（`downloads.releaseBaseUrl`），进度见 `/agent-packages` |
@@ -54,9 +54,12 @@ curl -H "Authorization: Bearer $TOKEN" http://192.168.1.10:88/api/v1/overview
 | GET/POST/PUT/DELETE | `/users`、`/users/:id`、`/users/:id/logout` | admin | 用户管理 |
 | GET/POST/DELETE | `/api-tokens`、`/api-tokens/:id` | admin | API 令牌 |
 | GET/PUT | `/settings` | admin | 运行期设置（密钥显示为 `******`，回传表示不修改） |
+| GET | `/config` | admin | 系统参数（原 config.json / 环境变量中的参数）：`{rev, groups, items:[{key, label, type, value, default, stored, source: env/admin/default, env, locked, apply: live/restart, pending}], bootstrap（启动参数，只读）, pendingRestart, warnings}` |
+| PUT | `/config` | admin（不可用 API 令牌） | 修改系统参数 `{rev, values: {键: 值}}`：逐项校验，整批保存；`rev` 不是当前版本返回 409；环境变量锁定的项返回 409；保存后当前管理员将无法访问管理端时返回 409。返回最新的 `GET /config` 内容与 `changes` |
+| POST | `/config/reset` | admin（不可用 API 令牌） | 恢复默认 `{rev, keys: [键]}` |
 | POST | `/alerts/test` | admin | 告警测试 |
 | GET | `/logs?level=&q=&after=&limit=` | admin | 运行日志 |
-| GET / POST | `/backup` / `/restore` | admin | 备份导出 / 恢复（原子） |
+| GET / POST | `/backup` / `/restore` | admin | 备份导出 / 恢复（原子；含系统参数 `config`，环境变量锁定的项跳过，见返回的 `configSkipped`） |
 | GET | `/audit?limit=&offset=&q=` | admin | 审计日志（q 按用户 / 操作 / 对象 / IP 搜索） |
 | GET | `/system` | viewer | 版本、端口、资源 |
 | GET | `/public/programs` | 公开（观众口可用） | 门户页程序列表 |

@@ -48,11 +48,16 @@ class Signaling {
 
 	clientInfo(req, isPublic) {
 		if (req._ps) return req._ps;
-		const sec = this.config.security;
+		return (req._ps = this.resolveClient(req, isPublic, this.config.security));
+	}
+
+	/** 按给定的安全设置解析客户端地址（不缓存；管理端修改可信代理 / 允许网段前用来检查是否会把自己锁在外面）。本机回环地址始终视为可信代理 */
+	resolveClient(req, isPublic, sec) {
+		const trust = new Set([...(sec.trustProxy || []).map(normalizeIp), "127.0.0.1", "::1"]);
 		const peer = normalizeIp(req.socket.remoteAddress);
 		let ip = peer;
 		let proxied = isPublic;
-		const trusted = isPublic || (sec.trustProxy || []).map(normalizeIp).includes(peer);
+		const trusted = isPublic || trust.has(peer);
 		if (trusted) {
 			const xff = String(req.headers["x-forwarded-for"] || "")
 				.split(",")
@@ -63,7 +68,7 @@ class Signaling {
 				ip = xff[xff.length - 1];
 				for (let i = xff.length - 1; i >= 0; i--) {
 					ip = xff[i];
-					if (!(sec.trustProxy || []).map(normalizeIp).includes(ip)) break;
+					if (!trust.has(ip)) break;
 				}
 				proxied = true;
 			} else if (xri) {
@@ -73,12 +78,14 @@ class Signaling {
 		}
 		const external = proxied && !isPrivateIp(ip, sec.lanNetworks || []);
 		const where = proxied ? resolveRequestHost(req.headers, !!req.socket.encrypted) : null;
-		return (req._ps = { ip, proxied, external, where, isPublic });
+		return { ip, proxied, external, where, isPublic };
 	}
 
+	/** UE / Agent 是否允许接入：「UE / Agent 允许接入的网段」，本机回环地址始终允许（同机演示 Agent、本机 UE） */
 	engineAllowed(req, isPublic) {
 		const info = this.clientInfo(req, isPublic);
 		if (isPublic || info.proxied) return false;
+		if (info.ip === "127.0.0.1" || info.ip === "::1" || info.ip.startsWith("127.")) return true;
 		const ok = ipInList(this.config.security.engineAllow, info.ip);
 		return ok === null ? true : ok;
 	}

@@ -22,7 +22,7 @@ services:
         NODE_IMAGE: ${NODE_IMAGE:-node:22-alpine}
         APK_MIRROR: ${APK_MIRROR:-}
         NPM_REGISTRY: ${NPM_REGISTRY:-}
-    image: ps-platform-demo-agent:1.4.0
+    image: ps-platform-demo-agent:1.5.0
     network_mode: host
     restart: unless-stopped
     init: true                           # Chromium 的辅助进程会成为孤儿，必须有 init 回收，否则僵尸进程不断累积

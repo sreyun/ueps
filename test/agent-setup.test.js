@@ -202,3 +202,62 @@ test("Agent --config：读取安装程序写入的配置，命令行参数优先
 	assert.deepStrictEqual(o.allowExe, ["D:\\Other"]);
 	assert.throws(() => parseArgs(["--config", path.join(dir, "missing.json")]), /无法读取 Agent 配置文件/);
 });
+
+test("接入渲染机：可指定渲染机访问地址（地址候选、回环提示、格式校验），安装链接使用该地址", async () => {
+	const ctx = await startPlatform();
+	try {
+		await ctx.login();
+		// 默认：当前访问管理端的地址；通过 127.0.0.1 访问时标记为回环
+		let r = await ctx.api("GET", "/api/v1/agent-install");
+		assert.strictEqual(r.status, 200);
+		assert.strictEqual(r.body.address, `127.0.0.1:${ctx.ADMIN}`);
+		assert.strictEqual(r.body.loopback, true);
+		assert.ok(Array.isArray(r.body.hosts) && r.body.hosts.length >= 1);
+		assert.deepStrictEqual(r.body.hosts[0], { host: `127.0.0.1:${ctx.ADMIN}`, label: "当前访问管理端的地址", loopback: true });
+		assert.strictEqual(r.body.token, ctx.app.secrets.agentToken);
+
+		// 指定地址：去掉协议与路径、统一小写，所有地址与命令都使用它
+		r = await ctx.api("GET", `/api/v1/agent-install?host=${encodeURIComponent("http://Render-GW.example:8800/agent")}`);
+		assert.strictEqual(r.status, 200);
+		assert.strictEqual(r.body.address, "render-gw.example:8800");
+		assert.strictEqual(r.body.loopback, false);
+		assert.strictEqual(r.body.url, "ws://render-gw.example:8800/agent");
+		assert.strictEqual(r.body.downloads.linux, "http://render-gw.example:8800/download/agent/linux");
+		assert.match(r.body.windows, /--url ws:\/\/render-gw\.example:8800\/agent /);
+		for (const h of ["192.168.1.10", "10.0.0.5:88", "[fe80::1]:88", "ue.example.com"]) assert.strictEqual((await ctx.api("GET", `/api/v1/agent-install?host=${encodeURIComponent(h)}`)).status, 200, h);
+
+		// 格式错误：给出可读原因
+		for (const bad of ["bad host", "a b/c", "x:99999", "-x.com", "a..b", "<script>"]) {
+			r = await ctx.api("GET", `/api/v1/agent-install?host=${encodeURIComponent(bad)}`);
+			assert.strictEqual(r.status, 400, bad);
+			assert.match(r.body.error, /地址格式不正确|端口必须/, bad);
+		}
+
+		// 安装链接：链接本身与写入安装程序的平台地址都使用指定地址
+		await raw(ctx.ADMIN, "PUT", "/api/v1/agent-packages/windows", { body: fakeSetup(Buffer.concat([Buffer.from("MZ"), crypto.randomBytes(2000)])), headers: { Cookie: ctx.cookie, "X-PS-Request": "1", "Content-Type": "application/octet-stream" } });
+		const link = await ctx.api("POST", "/api/v1/agent-setup-link", { host: "10.1.2.3:88" });
+		assert.strictEqual(link.status, 200);
+		const u = new URL(link.body.url);
+		assert.strictEqual(u.host, "10.1.2.3:88");
+		const dl = await raw(ctx.ADMIN, "GET", u.pathname + u.search);
+		assert.strictEqual(dl.status, 200);
+		const f = path.join(ctx.dir, "dl2.exe");
+		fs.writeFileSync(f, dl.body);
+		const c = readSections(f).sections[0];
+		const cfg = JSON.parse(dl.body.subarray(c.offset, c.offset + c.length));
+		assert.strictEqual(cfg.url, "ws://10.1.2.3:88/agent");
+		assert.strictEqual(cfg.platform, "http://10.1.2.3:88");
+		assert.strictEqual((await ctx.api("POST", "/api/v1/agent-setup-link", { host: "bad host" })).status, 400);
+
+		// 轮换令牌后，已生成的安装链接仍可下载，并附带新令牌
+		const rot = await ctx.api("POST", "/api/v1/agent-token/rotate");
+		assert.strictEqual(rot.status, 200);
+		const dl2 = await raw(ctx.ADMIN, "GET", u.pathname + u.search);
+		assert.strictEqual(dl2.status, 200);
+		fs.writeFileSync(f, dl2.body);
+		const c2 = readSections(f).sections[0];
+		assert.strictEqual(JSON.parse(dl2.body.subarray(c2.offset, c2.offset + c2.length)).token, rot.body.token);
+	} finally {
+		await ctx.stop();
+	}
+});

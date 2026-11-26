@@ -1,4 +1,4 @@
-import { html, usePoll, api, run, Card, Table, Badge, Modal, Field, fmt, can, useState, useStore, confirmDialog, CopyLine, AsyncButton, Empty, publicUrl, hasPublicBase, embedCode, copyText } from "../lib.js";
+import { html, usePoll, api, run, Card, Table, Badge, Modal, Field, fmt, can, useState, useStore, confirmDialog, CopyLine, AsyncButton, Empty, publicUrl, hasPublicBase, embedCode, copyText, Icon } from "../lib.js";
 
 const linkState = (l) => (l.revoked ? "revoked" : l.expires_at && l.expires_at < Date.now() ? "expired" : l.max_uses && l.uses >= l.max_uses ? "used" : "ok");
 const STATE = { revoked: ["bad", "已作废"], expired: ["muted", "已过期"], used: ["muted", "次数用完"], ok: ["ok", "有效"] };
@@ -25,7 +25,7 @@ export function Links() {
 			title="访问链接"
 			sub="程序开启「需要访问链接」后，观众必须使用这里生成的链接；可设置有效期与可用次数，随时作废。VIP 链接的观众排队优先。"
 			extra=${html`<label class="check small"><input type="checkbox" checked=${onlyValid} onChange=${(e) => setOnlyValid(e.target.checked)} />只看有效</label>
-				${can("operator") && html`<button class="primary" disabled=${!programs.length} onClick=${() => setCreating(true)}>＋ 生成链接</button>`}`}
+				${can("operator") && html`<button class="primary" disabled=${!programs.length} onClick=${() => setCreating(true)}><${Icon} name="plus" />生成链接</button>`}`}
 		>
 			${!hasPublicBase() && html`<div class="alert info">尚未设置「对外访问地址」，生成的链接将使用当前管理口地址（外网观众无法访问）。${can("admin") ? html` <a href="#/settings">去设置</a>` : ""}</div>`}
 			<${Table}

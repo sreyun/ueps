@@ -5,6 +5,7 @@
  *   node server.js                    管理平台（信令 + 调度 + 管理端 + 内置 TURN）
  *   node server.js --turn [turn.json] 只运行 TURN 中继（平台内部以子进程方式使用）
  *   node server.js --agent --url ws://平台:88/agent --token xxx   渲染节点代理
+ *   node server.js --show-config      列出全部配置项的生效值与来源（环境变量 / 管理端 / config.json / 默认）
  * 打包成 exe 后同样适用：ps-platform.exe / ps-platform.exe --turn / ps-platform.exe --agent ...
  */
 const path = require("path");
@@ -21,6 +22,22 @@ if (process.argv.includes("--turn")) {
 	require("./lib/turn-tcp.js").main(process.argv);
 } else if (process.argv.includes("--agent")) {
 	require("./agent/agent.js").main(process.argv.slice(2).filter((a) => a !== "--agent"));
+} else if (process.argv.includes("--show-config")) {
+	// 运维排障：不启动服务，打印每个配置项的生效值与来源
+	const { loadConfig } = require("./src/config.js");
+	const { Store } = require("./src/store.js");
+	const { ConfigCenter } = require("./src/config-center.js");
+	try {
+		const config = loadConfig({ baseDir: process.env.PS_HOME || (IS_SEA ? path.dirname(process.execPath) : __dirname) });
+		const store = new Store(config.dataDir);
+		const cc = new ConfigCenter({ store, config });
+		console.log(cc.describe());
+		for (const [, msg] of cc.notes) console.log(msg);
+		store.close();
+	} catch (e) {
+		console.error(e.message);
+		process.exit(1);
+	}
 } else if (process.argv.includes("--reset-password")) {
 	// 忘记口令：ps-platform --reset-password [用户名]（新口令取环境变量 PS_NEW_PASSWORD，否则随机生成并写入 data/initial-admin.txt）
 	// 同时解除禁用、清除两步验证、让该用户所有已登录会话失效。平台运行中也可执行。
@@ -63,11 +80,17 @@ if (process.argv.includes("--turn")) {
 		console.error(e.message);
 		process.exit(1);
 	}
-	const app = createApp({
-		config,
-		assetsDir: process.env.PS_ASSETS || baseDir,
-		selfCommand: IS_SEA ? [process.execPath] : [process.execPath, __filename],
-	});
+	let app;
+	try {
+		app = createApp({
+			config,
+			assetsDir: process.env.PS_ASSETS || baseDir,
+			selfCommand: IS_SEA ? [process.execPath] : [process.execPath, __filename],
+		});
+	} catch (e) {
+		console.error(e.message);
+		process.exit(1);
+	}
 	app.start().catch((e) => {
 		console.error("启动失败：", e.message);
 		process.exit(1);

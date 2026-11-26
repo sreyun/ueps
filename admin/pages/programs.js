@@ -1,4 +1,4 @@
-import { html, usePoll, api, run, Card, Table, Badge, Modal, Field, useForm, can, useState, confirmDialog, useStore, Tabs, CopyLine, AsyncButton, Empty, publicUrl, hasPublicBase, playPath, legacyPath, embedCode, copyText } from "../lib.js";
+import { html, usePoll, api, run, Card, Table, Badge, Modal, Field, useForm, can, useState, confirmDialog, useStore, Tabs, CopyLine, AsyncButton, Empty, publicUrl, hasPublicBase, playPath, legacyPath, embedCode, copyText, Icon } from "../lib.js";
 
 const EMPTY = {
 	id: "",
@@ -54,7 +54,7 @@ export function Programs() {
 		<${Card}
 			title=${`程序${rows ? `（${rows.length}）` : ""}`}
 			sub="一个程序 = 一个 UE 打包应用。观众进入时平台在空闲 GPU 上按需启动实例，观众离开后自动回收。"
-			extra=${can("operator") && html`<button class="primary" onClick=${() => setEditing({ ...EMPTY })}>＋ 新建程序</button>`}
+			extra=${can("operator") && html`<button class="primary" onClick=${() => setEditing({ ...EMPTY })}><${Icon} name="plus" />新建程序</button>`}
 		>
 			${!hasPublicBase() && html`<div class="alert info">尚未设置「对外访问地址」，复制的播放地址将使用当前管理口地址（外网观众无法访问）。${can("admin") ? html` <a href="#/settings">去设置</a>` : "请联系管理员设置。"}</div>`}
 			<${Table}

@@ -2,7 +2,7 @@
 #  ps-platform 网关：nginx（唯一对外端口）+ ps-platform（信令 + 调度 + 管理端 + 内置 TURN/TCP 中继）
 #
 #  部署机：与 UE 渲染机同一内网的 Linux 主机（Docker Engine + compose v2）。
-#    cp .env.example .env        # 按注释填写 LAN_IP / UE_SUBNETS / 密钥
+#    cp .env.example .env        # 一般只需填写密钥；网段、TURN 等参数可在管理端「系统设置 → 系统参数」维护
 #    mkdir -p certs && 放入 fullchain.pem / privkey.pem（自签名也可，见 docs/INSTALL.md）
 #    docker compose up -d --build
 #    docker compose ps
@@ -24,38 +24,41 @@ services:
         NODE_IMAGE: ${NODE_IMAGE:-node:22-alpine}
         NPM_REGISTRY: ${NPM_REGISTRY:-}
     # 使用预构建镜像（华为云 SWR）时在 .env 设置 PS_IMAGE，然后 docker compose pull platform && docker compose up -d --no-build
-    image: ${PS_IMAGE:-ps-platform:1.4.0}
+    image: ${PS_IMAGE:-ps-platform:1.5.0}
     network_mode: host
     restart: unless-stopped
     init: true                           # tini 作为 1 号进程：转发信号、回收孤儿子进程
     volumes:
       - ${DATA_DIR:-./data}:/data
     environment:
+      # ---- 启动参数（必须保留：监听端口、与 nginx 配套的 TURN 监听 / 内部入口）----
       PS_PORT: ${PS_PORT:-88}
       PS_HOST: 0.0.0.0
       PS_PUBLIC_PORT: ${PS_PUBLIC_PORT:-8088}
       PS_PUBLIC_HOST: 127.0.0.1
-      PS_UE_HOST: ${PS_UE_HOST:-auto}
-      PS_ADMIN_ALLOW: ${ADMIN_SUBNETS:-127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
-      PS_ENGINE_ALLOW: ${UE_SUBNETS:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16},127.0.0.0/8
-      PS_LAN_NETWORKS: ${LAN_NETWORKS:-}
-      # 信任其 X-Forwarded-For 的代理：本机 nginx + 前面的上游反向代理（路由器反代 / 云负载均衡 / CDN 回源地址）
-      PS_TRUST_PROXY: "127.0.0.1,::1,${UPSTREAM_PROXIES:-}"
       PS_LOCAL_AGENT: "false"            # 容器里没有 UE；渲染机各自运行 Agent
-      PS_ADMIN_PASSWORD: ${PS_ADMIN_PASSWORD:-}   # 留空则随机生成，见 data/initial-admin.txt
-      PS_AGENT_TOKEN: ${PS_AGENT_TOKEN:-}         # 留空则随机生成（管理端可查看/轮换）
-      PS_JWT_SECRET: ${PS_JWT_SECRET:-}
       TURN_BUILTIN: "true"
+      TURN_LISTEN: 127.0.0.1:${TURN_PORT:-3478}            # 须与下方 nginx 的 PS_TURN_UPSTREAM 一致
+      TURN_HTTP_FALLBACK: ${INT_HTTP:-127.0.0.1:3480}       # 同端口明文 http，须与 nginx 的 PS_INT_HTTP 一致
+      # ---- 密钥（留空 = 首次启动随机生成并保存在数据库）----
+      PS_ADMIN_PASSWORD: ${PS_ADMIN_PASSWORD:-}   # 初始管理员口令，留空则随机生成，见 data/initial-admin.txt
+      PS_AGENT_TOKEN: ${PS_AGENT_TOKEN:-}         # 管理端可查看 / 轮换
+      PS_JWT_SECRET: ${PS_JWT_SECRET:-}
       TURN_SECRET: ${TURN_SECRET:-}
-      TURN_LISTEN: 127.0.0.1:${TURN_PORT:-3478}
-      TURN_RELAY_IP: ${LAN_IP:?请在 .env 中设置 LAN_IP（本机内网 IP，UE 必须能访问）}
-      TURN_ALLOWED_PEERS: ${UE_SUBNETS:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16}
-      TURN_MIN_PORT: ${TURN_MIN_PORT:-49160}
-      TURN_MAX_PORT: ${TURN_MAX_PORT:-50159}
-      TURN_WORKERS: ${TURN_WORKERS:-auto}
-      TURN_FORCE_RELAY: ${TURN_FORCE_RELAY:-false}
-      # 同端口明文 http：TURN 把识别出的 HTTP 连接转给 nginx 的内部 http server（http://IP:端口/… 旧地址、嵌入 http 系统）
-      TURN_HTTP_FALLBACK: ${INT_HTTP:-127.0.0.1:3480}
+      # ---- 以下各项在管理端「系统设置 → 系统参数」维护；只有在 .env 中填写时才传入（并锁定为该值），留空 = 由管理端维护 ----
+      PS_ADMIN_ALLOW: ${ADMIN_SUBNETS:-}
+      PS_ENGINE_ALLOW: ${UE_SUBNETS:-}
+      PS_LAN_NETWORKS: ${LAN_NETWORKS:-}
+      PS_TRUST_PROXY: ${UPSTREAM_PROXIES:-}       # 本机 nginx（回环地址）始终可信，这里只填前面的上游反向代理
+      PS_UE_HOST: ${PS_UE_HOST:-}
+      PS_LOG_LEVEL: ${PS_LOG_LEVEL:-}
+      TURN_RELAY_IP: ${LAN_IP:-}                  # 留空 = auto（第一个内网 IP）；多网卡时在 .env 或管理端填写
+      TURN_ALLOWED_PEERS: ${UE_SUBNETS:-}
+      TURN_MIN_PORT: ${TURN_MIN_PORT:-}
+      TURN_MAX_PORT: ${TURN_MAX_PORT:-}
+      TURN_WORKERS: ${TURN_WORKERS:-}
+      # ---- 只在首次启动时作为初始值（之后以管理端「播放链路」为准）----
+      TURN_FORCE_RELAY: ${TURN_FORCE_RELAY:-}
       DC_TURN_URLS: ${DC_TURN_URLS:-}
       DC_TURN_SECRET: ${DC_TURN_SECRET:-}
       UE_TURN_URLS: ${UE_TURN_URLS:-}

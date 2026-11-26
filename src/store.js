@@ -222,7 +222,10 @@ class Store {
 	}
 
 	/** 在一个事务内执行 fn（出错整体回滚） */
+	/** 事务；嵌套调用并入外层事务（外层回滚时一并回滚） */
 	transaction(fn) {
+		if (this.txDepth) return fn();
+		this.txDepth = 1;
 		this.db.exec("BEGIN");
 		try {
 			const r = fn();
@@ -232,6 +235,8 @@ class Store {
 			this.db.exec("ROLLBACK");
 			this.machineCache.clear();
 			throw e;
+		} finally {
+			this.txDepth = 0;
 		}
 	}
 

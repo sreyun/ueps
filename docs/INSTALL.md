@@ -1,6 +1,6 @@
 # ps-platform 安装部署与运维手册
 
-> 适用版本：ps-platform 1.4.0　|　运行环境：Node.js ≥ 22.13（或直接使用打包好的 `ps-platform.exe`，无需安装 Node.js）
+> 适用版本：ps-platform 1.5.0　|　运行环境：Node.js ≥ 22.13（或直接使用打包好的 `ps-platform.exe`，无需安装 Node.js）
 
 目录
 
@@ -72,18 +72,18 @@
 # 把 ps-platform 目录拷到网关，例如 /opt/ps-platform
 cd /opt/ps-platform/deploy
 cp .env.example .env
-vi .env            # 至少填写 LAN_IP、UE_SUBNETS；建议填写 PS_ADMIN_PASSWORD、PS_AGENT_TOKEN、TURN_SECRET
+vi .env            # 建议填写 PS_ADMIN_PASSWORD、PS_AGENT_TOKEN、TURN_SECRET；网段等参数可在管理端维护
 chmod 600 .env
 ```
 
-`.env` 最少内容示例：
+`.env` 示例（网段、内置 TURN 中继地址等参数启动后在管理端「系统设置」维护即可；在 `.env` 中填写则以填写的值为准、管理端只读，见 6.2）：
 
 ```ini
-LAN_IP=192.168.1.10                 # 网关内网 IP（UE 能访问）
-UE_SUBNETS=192.168.1.0/24           # 渲染机网段
 PS_ADMIN_PASSWORD=换成强口令Ab12     # 首次启动的 admin 口令（留空则随机生成到 data/initial-admin.txt）
 PS_AGENT_TOKEN=$(openssl rand -hex 24 的输出)
 TURN_SECRET=$(openssl rand -hex 24 的输出)
+# 可选：网关有多块网卡时指定内置 TURN 的中继地址（默认取第一个内网 IP）
+# LAN_IP=192.168.1.10
 ```
 
 与其它服务共用一台机器、默认端口被占用时，改 `.env` 中的端口段（`PS_PORT`、`MUX_PORT`、`TURN_PORT`、`INT_*`、`STATUS_ADDR`、`TURN_MIN/MAX_PORT`），nginx 配置由模板自动渲染，无需手改。
@@ -113,7 +113,7 @@ curl -s http://127.0.0.1:88/healthz    # 含版本、Agent 数、TURN 状态
 
 国内网络拉镜像慢：在 `.env` 设置 `NODE_IMAGE=docker.m.daocloud.io/library/node:22-alpine`、`NGINX_IMAGE=docker.m.daocloud.io/library/nginx:stable-alpine`、`APK_MIRROR=https://mirrors.aliyun.com`。
 
-管理端：`http://<LAN_IP>:88/admin/`（用户名 `admin`）。观众：`https://<域名或 IP[:映射端口]>/`。
+管理端：`http://<网关内网 IP>:88/admin/`（用户名 `admin`）。观众：`https://<域名或 IP[:映射端口]>/`。
 
 首次登录后按「概览 → 开始使用」引导完成：① 系统设置 → 访问与嵌入 → 填写**对外访问地址**（观众访问 nginx 的地址，用于生成播放地址与嵌入代码；也可在 `.env` 中用 `PS_PUBLIC_BASE_URL` 预置）；② 接入渲染机；③ 新建程序；④ 在「程序与访问」点击「访问」复制播放地址 / 嵌入代码。
 
@@ -151,7 +151,7 @@ cd deploy && docker compose up -d --build
 
 ```bash
 # deploy/.env
-PS_IMAGE=swr.cn-east-3.myhuaweicloud.com/sreyun/ps-platform:1.4.0
+PS_IMAGE=swr.cn-east-3.myhuaweicloud.com/sreyun/ps-platform:1.5.0
 
 docker compose pull platform           # 拉取平台镜像（nginx 镜像同样从 NGINX_IMAGE 拉取）
 docker compose up -d --no-build
@@ -159,8 +159,8 @@ docker compose up -d --no-build
 
 | 镜像标签 | 含义 |
 |---|---|
-| `1.4.0` | 固定版本（**生产环境推荐**，升级时显式修改） |
-| `1.4` / `1` | 该次版本 / 主版本的最新发布 |
+| `1.5.0` | 固定版本（**生产环境推荐**，升级时显式修改） |
+| `1.5` / `1` | 该次版本 / 主版本的最新发布 |
 | `latest` | 最新正式发布 |
 | `sha-xxxxxxx` | 对应某次提交，排查问题时使用 |
 
@@ -195,7 +195,7 @@ Linux：
 
 ```bash
 tar -xzf ps-platform-<版本>-linux-x64.tar.gz -C /opt && cd /opt/ps-platform-<版本>-linux-x64
-cp config.example.json config.json      # 按第 6 节修改（Linux 上通常 localAgent.enable=false，渲染机另行接入）
+cp config.example.json config.json      # 按第 6 节修改（Linux 上通常关闭本机 Agent：管理端「系统设置 → 本机 Agent」）
 ./ps-platform
 ```
 
@@ -251,7 +251,7 @@ Windows 版 nginx 单 worker 并发约 1000 连接；观众较多时建议用 Li
 
 ### 5.1 Windows 10 / 11：图形安装（推荐）
 
-1. 管理端「渲染机 / GPU → 接入渲染机 → Windows（图形安装）」点 **复制安装链接**（仅管理员可见，24 小时内有效），在渲染机的浏览器中打开，下载 `ps-platform-agent-setup.exe`。也可以点「直接下载」后用 U 盘 / 共享文件夹拷贝过去。
+1. 管理端「渲染机 / GPU → 接入渲染机」。顶部「连接信息」显示**渲染机访问地址**（可在下拉中选择本机网卡地址或「自定义地址」；在服务器本机用 127.0.0.1 打开管理端时会自动改用内网地址并提示）、**Agent 连接地址**与**接入令牌**（管理员可显示 / 复制 / 轮换）。在「Windows 图形安装」中按步骤点 **复制安装链接**（仅管理员可见，24 小时内有效），在渲染机的浏览器中打开，下载 `ps-platform-agent-setup.exe`。也可以点「直接下载」后用 U 盘 / 共享文件夹拷贝过去。安装完成后对话框底部实时显示新接入的渲染机。
 2. 在渲染机上双击运行（需要管理员权限），按向导点「下一步」：
    - **连接平台**：平台地址与接入令牌已包含在安装程序中，向导自动检测连接；
    - **本机设置**：机器名称（默认计算机名）、UE 程序所在文件夹（安全白名单，可添加多个）；
@@ -268,7 +268,7 @@ Windows 版 nginx 单 worker 并发约 1000 连接；观众较多时建议用 Li
 - **卸载**：Windows「设置 → 应用 → ps-platform 渲染节点 Agent → 卸载」。会停止 Agent、移除自动运行，并结束由 Agent 启动且仍在运行的 UE。
 - 安装位置中的文件：`ps-platform.exe`（Agent）、`ps-agent.exe`（守护进程：Agent 退出后自动重启）、`data\agent.json`（配置，含令牌，只有 SYSTEM / 管理员可读）、`data\logs\agent-日期.log`（日志，保留 14 天）。
 - 首次运行若出现「Windows 已保护你的电脑」，点「更多信息 → 仍要运行」（安装程序未做代码签名）。
-- 轮换接入令牌后，各渲染机重新下载安装程序运行一次即可（或修改 `data\agent.json` 中的 `token` 后重启服务 `ps-platform-agent`）。
+- 轮换接入令牌后，各渲染机重新下载安装程序运行一次即可（之前生成的安装链接仍可用，下载时附带新令牌；或修改 `data\agent.json` 中的 `token` 后重启服务 `ps-platform-agent`）。
 
 **批量部署（静默安装）**：用安装链接下载的安装程序（已含平台地址与令牌），在 PowerShell 中以管理员身份执行：
 
@@ -291,7 +291,7 @@ Start-Process -Wait .\ps-platform-agent-setup.exe -ArgumentList '/S','/id=render
 
 ### 5.2 Linux 渲染机
 
-「接入渲染机 → Linux」复制命令执行（先在该页获取一次 Linux Agent，方法同上，发布页文件为 `ps-platform-agent-<版本>-linux-x64`）：
+「接入渲染机 → Linux」填写机器名称与 UE 目录后复制命令执行（先在该页获取一次 Linux Agent，方法同上，发布页文件为 `ps-platform-agent-<版本>-linux-x64`）；同页「开机自启」可复制注册 systemd 服务的命令（以普通用户执行，UE 不能以 root 运行）：
 
 ```bash
 curl -fL -o ps-platform http://192.168.1.10:88/download/agent/linux && chmod +x ps-platform
@@ -327,58 +327,70 @@ UE 由平台按程序配置拉起，平台自动追加：`-PixelStreamingURL=ws:
 
 ## 6. 配置参考
 
-### 6.1 config.json（启动配置，修改后重启生效）
+配置分三层，**日常只需要在管理端修改**：
 
-| 键 | 默认 | 说明 |
-|---|---|---|
-| `dataDir` | `./data` | 数据库、日志、自定义网页目录 |
-| `http.port` / `http.host` | 88 / 0.0.0.0 | 管理口 |
-| `http.publicPort` / `http.publicHost` | 8088 / 127.0.0.1 | 观众口（只给 nginx 访问） |
-| `http.tls` | null | `{cert,key,admin}`：不经 nginx 直接提供 https/wss。默认只作用于观众口；`admin:true` 时管理口也启用（UE 需 `wss://`） |
-| `gateway.ueHost` | auto | UE 连接平台用的 `host:port`；auto = Agent 连接平台时用的地址 |
-| `security.trustProxy` | 127.0.0.1, ::1 | 信任其 `X-Forwarded-For` 的代理 |
-| `security.adminAllow` | 私网段 | 允许访问管理端/API/metrics 的网段 |
-| `security.engineAllow` | 私网段 | 允许以 UE / Agent 身份连接的网段 |
-| `security.lanNetworks` | [] | 额外视为"内网"的网段（决定是否当作外网观众） |
-| `security.sessionTtlHours` | 8 | 管理端登录有效期 |
-| `localAgent.enable` | true | 内置本机 Agent（docker 中为 false） |
-| `localAgent.allowExe` | [] | 本机 Agent 允许启动的目录 |
-| `localAgent.killOnStop` | true | 平台正常停止时结束本机 UE |
-| `turn.forceRelay` | false | 首次启动的强制中继策略（之后以管理端为准） |
-| `turn.servers` | [] | 首次启动写入的额外 STUN/TURN |
-| `turn.builtin.enable` | false | 内置 TURN（docker 中为 true） |
-| `turn.builtin.listen` | 127.0.0.1:3478 | TURN TCP 监听（nginx 转发到这里） |
-| `turn.builtin.relayIp` | auto | 中继 UDP 绑定的内网 IP（UE 必须能访问） |
-| `turn.builtin.minPort/maxPort` | 49160/50159 | 中继端口段，容量 ≈ 端口数 / 2 |
-| `turn.builtin.allowedPeers` | 私网段 | 只允许中继到这些地址（防止被当作开放代理） |
-| `turn.builtin.workers` | auto | TURN worker 进程数（min(4, CPU 核数)） |
-| `turn.builtin.httpFallback` | null | 同端口明文 http：设为 nginx 内部 http 入口 `127.0.0.1:3480` 后，对外端口同时支持 `http://`（docker-compose 默认开启） |
-| `downloads.releaseBaseUrl` | GitHub Releases（`…/releases/download/v{version}`） | 「接入渲染机」一键获取 Agent 安装包的地址，`{version}` 替换为平台版本；内网可改为自建镜像（目录中放同名文件），空字符串 = 不提供一键获取。经代理访问外网时设置环境变量 `HTTPS_PROXY` 并加 `NODE_USE_ENV_PROXY=1` |
-| `history.retentionDays` | 90 | 会话/审计保留天数 |
-| `log.level` / `log.retentionDays` | info / 14 | 日志级别、文件保留天数 |
+| 层 | 在哪里改 | 生效 | 内容 |
+|---|---|---|---|
+| 运行期设置 | 管理端「系统设置」→ 访问与嵌入 / 播放链路 / 观众与接口安全 / 告警通知 | 立即 | 对外访问地址、TURN/ICE、强制中继、观众白名单、CORS、限流、告警 |
+| 系统参数 | 管理端「系统设置」→ 网络与访问控制 / 本机 Agent / 日志与数据保留 / Agent 安装包 / 内置 TURN | 立即，或标注「需重启」的项重启后 | 原来写在 config.json / 环境变量中的参数，见 6.2 |
+| 启动参数 | config.json 或环境变量 | 重启 | 打开数据库、监听端口之前就要用到的参数，见 6.1（管理端「系统信息」只读展示） |
 
-### 6.2 环境变量（覆盖 config.json）
+系统参数与运行期设置都保存在数据库（`data/` 目录），随「备份与恢复」导出；修改记入审计日志（`config.update` / `config.reset`，含修改前后的值）。
 
-| 变量 | 对应 |
-|---|---|
-| `PS_CONFIG` | 配置文件路径 |
-| `PS_DATA_DIR` `PS_PORT` `PS_HOST` `PS_PUBLIC_PORT` `PS_PUBLIC_HOST` `PS_UE_HOST` `PS_SITE_DIR` `PS_LOG_LEVEL` | 同名配置 |
-| `PS_ADMIN_ALLOW` `PS_ENGINE_ALLOW` `PS_TRUST_PROXY` `PS_LAN_NETWORKS` | 逗号分隔网段 |
-| `PS_LOCAL_AGENT` `PS_LOCAL_AGENT_ALLOW_EXE` | 本机 Agent |
-| `PS_TLS_CERT` `PS_TLS_KEY` `PS_TLS_ADMIN` | 内置 TLS |
-| `PS_RELEASE_BASE_URL` | `downloads.releaseBaseUrl` |
-| `PS_ADMIN_PASSWORD` | 首次启动的 admin 口令 |
-| `PS_PUBLIC_BASE_URL` | 首次启动写入的「对外访问地址」，例如 `https://ue.example.com:8443`（之后以管理端为准） |
-| `PS_JWT_SECRET` `PS_AGENT_TOKEN` `TURN_SECRET` | 固定密钥（默认随机生成存数据库） |
-| `TURN_BUILTIN` `TURN_LISTEN` `TURN_RELAY_IP` `TURN_MIN_PORT` `TURN_MAX_PORT` `TURN_WORKERS` `TURN_ALLOWED_PEERS` | 内置 TURN |
-| `TURN_FORCE_RELAY` | false / true / external |
-| `TURN_HTTP_FALLBACK` | 同端口明文 http 的内部入口（docker-compose 中由 `INT_HTTP` 决定，默认 127.0.0.1:3480） |
-| `DC_TURN_URLS` `DC_TURN_SECRET` | 自建数据中心 STUN/TURN（coturn use-auth-secret） |
-| `UE_TURN_URLS` `UE_TURN_SECRET` | 只下发给 UE 的 TURN（默认用内置 TURN 密钥） |
+### 6.1 启动参数（只能写在 config.json 或环境变量中）
 
-### 6.3 运行期设置（管理端「系统设置」，立即生效）
+| config.json | 环境变量 | 默认 | 说明 |
+|---|---|---|---|
+| `dataDir` | `PS_DATA_DIR` | `./data` | 数据库、日志、自定义网页目录 |
+| — | `PS_CONFIG` | 程序目录 / config.json | 配置文件路径 |
+| `http.port` / `http.host` | `PS_PORT` / `PS_HOST` | 88 / 0.0.0.0 | 管理口（管理端 / API / UE / Agent，仅内网） |
+| `http.publicPort` / `http.publicHost` | `PS_PUBLIC_PORT` / `PS_PUBLIC_HOST` | 8088 / 127.0.0.1 | 观众口（只给 nginx 访问） |
+| `http.tls` | `PS_TLS_CERT` `PS_TLS_KEY` `PS_TLS_ADMIN` | 无 | `{cert,key,admin}`：不经 nginx 直接提供 https/wss。默认只作用于观众口；`admin:true` 时管理口也启用（UE 需 `wss://`） |
+| `site.dir` | `PS_SITE_DIR` | `<dataDir>/www` | 自定义网页托管目录 |
+| — | `PS_ADMIN_PASSWORD` | 随机 | 首次启动（数据库里还没有用户时）的 admin 口令 |
+| — | `PS_JWT_SECRET` `PS_AGENT_TOKEN` `TURN_SECRET` | 随机 | 固定密钥（默认首次启动随机生成并保存在数据库） |
 
-TURN/ICE 服务器（`{host}`/`{port}` 自动替换为浏览器实际访问的地址；`scope` = player/ue/all；`audience` = all/external/lan）、强制中继、每 IP 观众上限、观众 IP 白名单、CORS 来源、工具接口是否公开、限流、告警 Webhook（企业微信/钉钉/飞书/通用 JSON）、API 令牌、备份/恢复。
+只在**首次启动**时作为运行期设置初始值、之后以管理端为准的（行为不变）：`PS_PUBLIC_BASE_URL`（对外访问地址）、`TURN_FORCE_RELAY`、`DC_TURN_URLS` / `DC_TURN_SECRET`、`UE_TURN_URLS` / `UE_TURN_SECRET`（config.json 中的 `http.publicBaseUrl`、`turn.forceRelay`、`turn.servers`）。
+
+进程级：经代理访问外网（一键获取安装包）时设置 `HTTPS_PROXY` 并加 `NODE_USE_ENV_PROXY=1`；`PS_HOME` / `PS_ASSETS` 指定程序与网页文件目录（一般不需要）。
+
+### 6.2 系统参数（管理端「系统设置」维护）
+
+| 分区 | 参数（config.json 键） | 环境变量 | 默认 | 生效 |
+|---|---|---|---|---|
+| 网络与访问控制 | 管理端允许网段 `security.adminAllow` | `PS_ADMIN_ALLOW` | 127/8、10/8、172.16/12、192.168/16 | 立即 |
+| | UE / Agent 允许网段 `security.engineAllow`（本机回环地址始终允许） | `PS_ENGINE_ALLOW` | 同上 | 立即 |
+| | 可信反向代理 `security.trustProxy`（本机回环地址始终可信） | `PS_TRUST_PROXY` | 127.0.0.1、::1 | 立即 |
+| | 额外内网网段 `security.lanNetworks` | `PS_LAN_NETWORKS` | 空 | 立即 |
+| | UE 连接地址 `gateway.ueHost` | `PS_UE_HOST` | auto | 重启 |
+| | 登录有效期（小时）`security.sessionTtlHours` | — | 8 | 立即（之后的登录） |
+| 本机 Agent | 启用本机 Agent `localAgent.enable` | `PS_LOCAL_AGENT` | 开（Docker 镜像中关） | 重启 |
+| | 允许启动的程序目录 `localAgent.allowExe` | `PS_LOCAL_AGENT_ALLOW_EXE` | 空（不限制） | 重启 |
+| | 平台停止时结束 UE `localAgent.killOnStop` | — | 开 | 立即 |
+| 日志与数据保留 | 日志级别 `log.level` | `PS_LOG_LEVEL` | info | 立即 |
+| | 写入日志文件 `log.file` | — | 开 | 重启 |
+| | 日志保留天数 `log.retentionDays` | — | 14 | 立即 |
+| | 会话历史保留天数 `history.retentionDays` | — | 90 | 立即 |
+| Agent 安装包 | 发布页地址 `downloads.releaseBaseUrl`（`{version}` = 平台版本，空 = 不提供一键获取） | `PS_RELEASE_BASE_URL` | GitHub Releases | 立即 |
+| 内置 TURN | `turn.builtin.enable` / `listen` / `relayIp` / `minPort` / `maxPort` / `workers` / `allowedPeers` / `httpFallback` | `TURN_BUILTIN` `TURN_LISTEN` `TURN_RELAY_IP` `TURN_MIN_PORT` `TURN_MAX_PORT` `TURN_WORKERS` `TURN_ALLOWED_PEERS` `TURN_HTTP_FALLBACK` | 关 / 127.0.0.1:3478 / auto / 49160 / 50159 / auto / 私网段 / 空 | 重启（须与 nginx 配置一致） |
+
+**优先级：环境变量 > 管理端保存的值 > 默认值。**
+
+- **设置了环境变量的项**以环境变量为准，管理端显示「🔒 环境变量名」且只读（兼容已有部署，行为与以前一致）。平台同时把这个值保存到数据库：以后删除该环境变量，仍沿用这个值，改由管理端维护。空字符串视为未设置（`PS_RELEASE_BASE_URL`、`TURN_HTTP_FALLBACK` 例外：空字符串 = 锁定为"不启用"）。环境变量的值不合法时平台拒绝启动并指明变量名。
+- **config.json 中的这些键**只在升级后首次启动时导入一次，之后以管理端为准；文件里的值与生效值不一致时，启动日志与管理端会提示（可从 config.json 中删除这些键）。
+- **校验**：保存前逐项校验（IP / 网段、端口范围、路径、URL 等），并做跨项检查（中继端口起 ≤ 止）；不合法时给出原因、整批不保存。修改「管理端允许网段 / 可信反向代理」时，若保存后你当前的地址将无法访问管理端，平台拒绝保存（防止把自己锁在外面）。
+- **生效**：立即生效的项保存后直接作用于运行中的平台（不访问数据库，读取内存中的生效值）；需重启的项保存后显示「重启后生效」，顶部提示待重启项数，重启平台后生效。
+- **并发**：每次保存版本号 + 1，两位管理员同时修改时后提交者会收到「已被其他管理员修改」，刷新后重试；其他管理员的页面自动刷新。
+- **权限**：查看需管理员；修改 / 恢复默认只允许管理员登录会话，不能用 API 令牌。
+- **查看生效值与来源**：`ps-platform --show-config`（Docker：`docker compose exec platform node server.js --show-config`）。
+
+### 6.3 升级与迁移
+
+1. 直接升级（替换程序 / 镜像后重启）即可，无需修改配置：环境变量照常生效（锁定），config.json 中的系统参数自动导入。
+2. 想改由管理端维护时：删除 `.env` / 服务配置中对应的环境变量（或 config.json 中的键）并重启。值会沿用，之后在管理端修改。docker-compose：`ADMIN_SUBNETS`、`UE_SUBNETS`、`LAN_NETWORKS`、`UPSTREAM_PROXIES`、`PS_UE_HOST`、`PS_LOG_LEVEL`、`LAN_IP`、`TURN_MIN_PORT`、`TURN_MAX_PORT`、`TURN_WORKERS` 现在都是可选的，留空即由管理端维护。
+3. 必须保留的部署参数：端口（`PS_PORT` 等）、`TURN_BUILTIN` / `TURN_LISTEN` / `TURN_HTTP_FALLBACK`（与 nginx 配套，docker-compose 已写好）、`PS_LOCAL_AGENT=false`（容器里没有 UE）、密钥（可留空自动生成）。
+4. **回退到旧版本**：旧版本不认识数据库中的系统参数，会重新按 config.json / 环境变量运行；回退前请把需要的值写回 config.json 或环境变量。
+5. **把自己锁在管理端外**（例如通过另一台机器修改了允许网段）：在服务器上设置环境变量 `PS_ADMIN_ALLOW=127.0.0.0/8,<你的网段>` 后重启平台（环境变量优先），进入管理端改好后再删除该环境变量重启。
 
 ## 7. 访问地址与嵌入其它系统
 
@@ -445,7 +457,7 @@ TURN/ICE 服务器（`{host}`/`{port}` 自动替换为浏览器实际访问的�
 
   **方案 B：路由器另开一个纯 TCP 端口转发**（四层转发，不是反向代理）到网关对外端口，例如 外网 TCP 8444 → 网关:443；
   然后在「系统设置 → TURN 服务器」添加 `turn:{host}:8444?transport=tcp`（密钥 `@builtin`，范围 player）。浏览器会同时尝试，哪条通用哪条。
-- **观众真实 IP**：把前置反代连到网关时的内网地址填入 `UPSTREAM_PROXIES`（docker-compose）或 `security.trustProxy`，否则所有外网观众都显示为反代的地址，
+- **观众真实 IP**：把前置反代连到网关时的内网地址填入管理端「系统设置 → 网络与访问控制 → 可信反向代理」（或 docker-compose 的 `UPSTREAM_PROXIES`），否则所有外网观众都显示为反代的地址，
   "同 IP 单会话 / 每 IP 上限 / 限流 / 内外网判断"都会失真。只填真正的代理地址，平台按 X-Forwarded-For 从右往左取第一个不可信地址，客户端无法伪造。
 - 自检：`node test/e2e/…` 之外，最简单的是在外网电脑上打开播放页点「状态」，链路应为 `TURN 中继(tcp)`；或用任意 TCP 工具确认转发端口能连通。
 
@@ -492,7 +504,7 @@ NODE_TLS_REJECT_UNAUTHORIZED=0 node test/load/platform-load.js --admin http://12
 | UE 连接被关闭 4009 | 该实例已被平台停止（防止"僵尸"UE 接管观众） | 正常现象；平台会自动停止该进程 |
 | 观众被断开：4003 / 4005 / 4006 / 4002 / 4007 | 需要访问链接 / 同 IP 新会话替换 / IP 不在白名单 / 长时间无操作 / 满员时让给 VIP 链接的观众 | 按程序设置调整（4007：关闭程序的「VIP 链接满员时抢占」或提高最大实例数） |
 | 观众连接 HTTP 429 | 同一 IP 新建连接过快（默认 20/s、突发 100） | 「系统设置 → 安全」调整限流；企业 NAT 适当调大 |
-| 管理端 403 "当前网络不允许访问管理接口" | 来源 IP 不在 `adminAllow` | 修改 `adminAllow` / `ADMIN_SUBNETS` |
+| 管理端 403 "当前网络不允许访问管理接口" | 来源 IP 不在「管理端允许网段」 | 从允许的地址登录后在「系统设置 → 网络与访问控制」中添加；无法登录时见 6.3 第 5 条 |
 | Agent 反复离线/上线 | 网络不稳、令牌错误（日志 `Agent 令牌错误`） | 检查令牌与网络；Agent 每 30s 心跳，连续 2 次无响应才判离线 |
 | 偶发 502 | nginx upstream keepalive 超时大于平台 | 使用本项目配置（nginx 60s < 平台 65s） |
 | 忘记管理员口令 / 两步验证手机丢失 | — | 另一个管理员在「用户」中重置；或在网关执行 `ps-platform.exe --reset-password admin`（docker：`docker compose exec platform node server.js --reset-password admin`），新口令写入 `data/initial-admin.txt`，同时清除两步验证、使旧登录失效。平台运行中可直接执行 |
@@ -557,7 +569,7 @@ ssh -p <SSH端口> -L 9443:127.0.0.1:9443 -L 18800:127.0.0.1:18800 <用户>@<服
 
 ### 13.1 发布一个新版本
 
-1. 修改版本号：`package.json` 的 `version` 与 `src/app.js` 的 `VERSION`（两处必须一致，发布工作流会校验）。
+1. 修改版本号：`package.json` 的 `version`、`src/app.js` 与 `agent/agent.js` 的 `VERSION`（三处必须一致，CI 与发布工作流会校验）。
 2. 在 `CHANGELOG.md` 增加 `## <版本>` 一节（会自动作为 Release 说明）。
 3. 提交并推送 main，等 ci 通过后打标签：
 

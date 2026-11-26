@@ -23,6 +23,30 @@ function firstLanIPv4() {
 	return (v4.find((a) => isPrivateIp(a.address)) || v4[0] || { address: "127.0.0.1" }).address;
 }
 
+/** 本机的 IPv4（「接入渲染机」的地址候选，内网地址在前）：跳过回环、链路本地与常见虚拟网卡（Docker / Hyper-V / VMware / VirtualBox / WSL） */
+const VIRTUAL_NIC = /^(docker|br-|veth|virbr|cni|flannel|kube|lxc|lxd)|vEthernet|VMware|VirtualBox|Hyper-V|WSL|Loopback/i;
+function lanIPv4s() {
+	const out = [];
+	for (const [name, addrs] of Object.entries(os.networkInterfaces())) {
+		if (VIRTUAL_NIC.test(name)) continue;
+		for (const a of addrs || []) {
+			if ((a.family === "IPv4" || a.family === 4) && !a.internal && !a.address.startsWith("169.254.")) out.push({ address: a.address, name, private: isPrivateIp(a.address) });
+		}
+	}
+	return out.sort((x, y) => y.private - x.private);
+}
+
+/** 主机名（可带端口）是否为回环 / 本机地址：其它机器无法用它访问本机 */
+function isLoopbackHost(host) {
+	let h = String(host || "")
+		.trim()
+		.toLowerCase();
+	const m = h.match(/^\[([^\]]+)\](?::\d*)?$/);
+	if (m) h = m[1];
+	else if ((h.match(/:/g) || []).length === 1) h = h.replace(/:\d*$/, "");
+	return h === "localhost" || h.endsWith(".localhost") || h === "::1" || h === "0.0.0.0" || h === "::" || /^127\./.test(h);
+}
+
 /** 列表（CIDR/IP）匹配器，带缓存；list 为 null 表示"不限制" */
 const matcherCache = new Map();
 function ipInList(list, ip) {
@@ -68,4 +92,4 @@ function throttle(fn, wait) {
 	};
 }
 
-module.exports = { newId, randomSecret, firstLanIPv4, ipInList, splitArgs, throttle, normalizeIp, isPrivateIp, resolveRequestHost };
+module.exports = { newId, randomSecret, firstLanIPv4, lanIPv4s, isLoopbackHost, ipInList, splitArgs, throttle, normalizeIp, isPrivateIp, resolveRequestHost };

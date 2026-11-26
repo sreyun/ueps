@@ -37,16 +37,20 @@ export function Dashboard() {
 	return html`
 		${!hideOnboarding && html`<${Onboarding} o=${o} />`}
 		<div class="kpis">
-			<${Kpi} href="#/sessions" label="在线观众" value=${k.viewers} sub=${`外网 ${k.external} · 排队 ${k.queued}`} tone=${k.queued ? "warn" : ""} />
-			<${Kpi} href="#/instances" label="运行实例" value=${k.instances.active} sub=${`使用中 ${k.instances.busy} · 空闲 ${k.instances.idle} · 启动中 ${k.instances.starting}`} />
-			<${Kpi} href="#/machines" label="渲染机" value=${`${k.machines.online} / ${k.machines.total}`} sub="在线 / 已登记" tone=${k.machines.total && !k.machines.online ? "bad" : k.machines.online < k.machines.total ? "warn" : ""} />
+			<${Kpi} href="#/sessions" icon="viewers" label="在线观众" value=${k.viewers} sub=${`外网 ${k.external} · 排队 ${k.queued}`} tone=${k.queued ? "warn" : ""} />
+			<${Kpi} href="#/instances" icon="instance" color="c4" label="运行实例" value=${k.instances.active} sub=${`使用中 ${k.instances.busy} · 空闲 ${k.instances.idle} · 启动中 ${k.instances.starting}`} />
+			<${Kpi} href="#/machines" icon="server" color="c6" label="渲染机" value=${`${k.machines.online} / ${k.machines.total}`} sub="在线 / 已登记" tone=${k.machines.total && !k.machines.online ? "bad" : k.machines.online < k.machines.total ? "warn" : ""} />
 			<${Kpi}
 				href="#/machines"
+				icon="gpu"
+				color="c2"
 				label="GPU"
 				value=${k.gpu.count ? `${k.gpu.util ?? 0}%` : "-"}
 				sub=${k.gpu.count ? `${k.gpu.count} 块 · 显存 ${fmt.mb(k.gpu.memUsedMB)} / ${fmt.mb(k.gpu.memTotalMB)}` : "未检测到 NVIDIA GPU"}
 			/>
 			<${Kpi}
+				icon="activity"
+				color="c3"
 				label="TURN 中继"
 				value=${k.turn.up ? fmt.kbps(k.turn.kbps) : k.turn.enabled ? "离线" : "未启用"}
 				sub=${k.turn.up ? `${k.turn.workers} 个进程 · ${k.turn.allocations} 个分配${k.turn.dropped ? ` · 拥塞丢包 ${fmt.num(k.turn.dropped)}` : ""}` : "外网观众经 nginx 同端口中继"}
@@ -56,9 +60,9 @@ export function Dashboard() {
 		<div class="grid2">
 			<${Card} title="观众" extra=${rangeBtns}>
 				<${LineChart} points=${pts} series=${[
-					{ key: "viewers", label: "在线", color: "#4f8cff" },
-					{ key: "external", label: "外网", color: "#a78bfa" },
-					{ key: "queued", label: "排队", color: "#f59e0b" },
+					{ key: "viewers", label: "在线", color: "var(--c1)" },
+					{ key: "external", label: "外网", color: "var(--c2)" },
+					{ key: "queued", label: "排队", color: "var(--c3)" },
 				]} />
 			<//>
 			<${Card} title="资源">
@@ -66,9 +70,9 @@ export function Dashboard() {
 					points=${pts}
 					format=${(v) => Math.round(v)}
 					series=${[
-						{ key: "instances", label: "实例数", color: "#22c55e" },
-						{ key: "gpu", label: "GPU %", color: "#ef4444" },
-						{ key: "cpu", label: "CPU %", color: "#06b6d4" },
+						{ key: "instances", label: "实例数", color: "var(--c4)" },
+						{ key: "gpu", label: "GPU %", color: "var(--c2)" },
+						{ key: "cpu", label: "CPU %", color: "var(--c6)" },
 					]}
 				/>
 			<//>

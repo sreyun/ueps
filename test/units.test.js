@@ -161,3 +161,15 @@ test("auth.LoginLimiter: failures outside the lock window do not accumulate", ()
 	lim.fail("ip");
 	assert.ok(lim.isLocked("ip") > 0, "three failures within the window lock");
 });
+
+test("util.isLoopbackHost / lanIPv4s; Agent version matches the platform", () => {
+	const { isLoopbackHost, lanIPv4s } = require("../src/util.js");
+	for (const h of ["localhost", "LOCALHOST:88", "127.0.0.1:88", "127.1.2.3", "[::1]:88", "::1", "0.0.0.0:88", "app.localhost:3000"]) assert.strictEqual(isLoopbackHost(h), true, h);
+	for (const h of ["192.168.1.10:88", "10.0.0.1", "ue.example.com:443", "[fe80::1]:88", "localhost.example.com", ""]) assert.strictEqual(isLoopbackHost(h), false, h);
+	for (const a of lanIPv4s()) {
+		assert.match(a.address, /^\d+\.\d+\.\d+\.\d+$/);
+		assert.ok(!a.address.startsWith("127.") && !a.address.startsWith("169.254."), a.address);
+	}
+	const pkg = require("../package.json");
+	assert.strictEqual(require("../agent/agent.js").VERSION, pkg.version, "agent/agent.js 的 VERSION 应与 package.json 一致");
+});

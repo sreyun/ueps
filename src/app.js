@@ -14,6 +14,7 @@ const WebSocketServer = WS.WebSocketServer || WS.Server;
 
 const { Store } = require("./store.js");
 const { Settings, loadSecrets } = require("./settings.js");
+const { ConfigCenter } = require("./config-center.js");
 const { AgentHub } = require("./agents.js");
 const { Scheduler } = require("./scheduler.js");
 const { Signaling, safeSend, tokenEqual } = require("./signaling.js");
@@ -28,11 +29,21 @@ const { firstLanIPv4, ipInList, randomSecret, throttle } = require("./util.js");
 const { createAgent } = require("../agent/agent.js");
 const { AgentPackages, configSection } = require("./downloads.js");
 
-const VERSION = "1.4.0";
+const VERSION = "1.5.0";
 
 function createApp({ config, assetsDir, log, selfCommand, env = process.env }) {
-	log = log || createLogger({ level: config.log.level, dir: config.log.file ? path.join(config.dataDir, "logs") : null, retentionDays: config.log.retentionDays });
 	const store = new Store(config.dataDir);
+	// 配置中心：管理端维护的系统参数（环境变量 > 管理端保存 > 默认），在其它模块读取 config 之前写入生效值
+	let configCenter;
+	try {
+		configCenter = new ConfigCenter({ store, config, env });
+	} catch (e) {
+		store.close();
+		throw e;
+	}
+	log = log || createLogger({ level: config.log.level, dir: config.log.file ? path.join(config.dataDir, "logs") : null, retentionDays: config.log.retentionDays });
+	for (const [lv, msg] of configCenter.notes) log[lv](msg);
+	for (const k of configCenter.staleFileKeys()) log.warn(`[config] config.json 中的 ${k} 已不再生效（以管理端「系统设置 → 系统参数」为准），可从 config.json 中删除`);
 	const secrets = loadSecrets(store, env);
 	const settings = new Settings(store, secrets, config);
 	const rateLimiter = new RateLimiter();
@@ -189,6 +200,7 @@ function createApp({ config, assetsDir, log, selfCommand, env = process.env }) {
 			machines,
 			players: players.slice(0, 500),
 			series: withSeries ? metrics.series("1h") : undefined,
+			config: { rev: configCenter.meta.rev, pendingRestart: configCenter.pendingCount(), pendingGroups: configCenter.pendingGroups() },
 		};
 	}
 
@@ -210,7 +222,18 @@ function createApp({ config, assetsDir, log, selfCommand, env = process.env }) {
 		};
 	}
 
-	const ctx = { store, scheduler, agents, signaling, metrics, settings, secrets, config, limiter, alerts, log, overview, systemInfo, packages, version: VERSION };
+	// 系统参数立即生效的项：config 已由配置中心就地更新，这里处理需要通知到对象内部的项
+	configCenter.on("change", ({ key, value }) => {
+		if (key === "log.level") log.setLevel?.(value);
+		else if (key === "log.retentionDays") log.setRetentionDays?.(value);
+		else if (key === "downloads.releaseBaseUrl") packages.releaseBaseUrl = value;
+	});
+	configCenter.on("saved", ({ changes, rev }) => {
+		log.info(`[config] 系统参数已更新（版本 ${rev}）：${changes.map((c) => `${c.key}${c.apply === "restart" ? "（重启后生效）" : ""}`).join("、")}`);
+		broadcastConfig();
+	});
+
+	const ctx = { store, scheduler, agents, signaling, metrics, settings, secrets, config, configCenter, limiter, alerts, log, overview, systemInfo, packages, version: VERSION };
 	const router = new Router();
 	registerApi(router, ctx);
 
@@ -396,6 +419,10 @@ function createApp({ config, assetsDir, log, selfCommand, env = process.env }) {
 			else if (ws.readyState === 1) ws.send(data);
 		}
 	}, 1000);
+	/** 系统参数变化：推送概览（含配置版本与待重启项数），其它管理员的页面据此提示刷新 */
+	function broadcastConfig() {
+		broadcast();
+	}
 	scheduler.on("changed", broadcast);
 	agents.on("changed", broadcast);
 	signaling.PLAYER.on("connection", (ws) => {
